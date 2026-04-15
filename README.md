@@ -153,12 +153,8 @@ A PhysX-based character controller using a box shape instead of a capsule.
 
 Similar to Unity’s `CharacterController`, with:
 
-- `Move` method only (no `SimpleMove` yet) (TODO)
+- `Move` method only (no `SimpleMove` yet) (todo)
 - Additional PhysX-specific features
-
-Key differences:
-
-- `slopeLimit` is defined in radians (Unity uses degrees) (may change in a future update)
 - Supports an experimental PhysX feature allowing interaction with kinematic rigidbodies
 - Behavior follows PhysX implementation
 
