@@ -53,7 +53,7 @@ namespace PhysX
         [SerializeField] private float _halfHeight = 0.5f;
         [SerializeField] private float _halfSideExtent = 0.5f;
         [SerializeField] private float _contactOffset = 0.1f;
-        [SerializeField] private float _slopeLimit = 0.7071f;
+        [SerializeField] private float _slopeLimit = 45f;
         [SerializeField] private float _stepOffset = 0.5f;
         [SerializeField] private float _invisibleWallHeight;
         [SerializeField] private float _maxJumpHeight;
@@ -231,7 +231,7 @@ namespace PhysX
             _controllerDesc->position.y = pxPosition.y;
             _controllerDesc->position.z = pxPosition.z;
             _controllerDesc->upDirection = _upDirection;
-            _controllerDesc->slopeLimit = _slopeLimit;
+            _controllerDesc->slopeLimit = _slopeLimit * Mathf.Deg2Rad;
             _controllerDesc->invisibleWallHeight = _invisibleWallHeight;
             _controllerDesc->maxJumpHeight = _maxJumpHeight;
             _controllerDesc->contactOffset = _contactOffset;
