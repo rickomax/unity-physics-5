@@ -63,7 +63,6 @@ namespace PhysX
         private float _updateInterval = 0f;
         private float _nextUpdateTime;
         private int _nextId = 1;
-        private Vector3 _lastGravity;
         private PxControllerManager* _controllerManager;
         private PxDefaultCpuDispatcher* _dispatcher;
         private PxErrorCallback* _errorCallback;
@@ -138,7 +137,6 @@ namespace PhysX
             _sceneDesc = (PxSceneDesc*)_sceneDescPtr;
             PxSceneDesc_setToDefault_mut(_sceneDesc, (PxTolerancesScale*)Unsafe.AsPointer(ref tolerancesScale));
             _sceneDesc->gravity = Physics.gravity;
-            _lastGravity = Physics.gravity;
             _dispatcher = phys_PxDefaultCpuDispatcherCreate(1, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
             _sceneDesc->cpuDispatcher = (PxCpuDispatcher*)_dispatcher;
             _sceneDesc->kineKineFilteringMode = PxPairFilteringMode.Kill;
@@ -236,12 +234,6 @@ namespace PhysX
             if (_scene == null)
             {
                 throw new NullReferenceException();
-            }
-            if (_lastGravity != Physics.gravity)
-            {
-                var gravity = (PxVec3)Physics.gravity;
-                PxScene_setGravity_mut(_scene, &gravity);
-                _lastGravity = Physics.gravity;
             }
             PxScene_simulate_mut(_scene, Time.fixedDeltaTime, null, _scratchBuffer, scratchBlockSize, true);
             uint error = 0;
