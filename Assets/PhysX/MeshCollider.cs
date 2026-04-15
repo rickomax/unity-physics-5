@@ -9,6 +9,7 @@ namespace PhysX
     {
         public bool convex;
 
+        [SerializeField]
         private Mesh _sharedMesh;
         private Mesh _lastSharedMesh;
         private Vector3 _lastScale;
