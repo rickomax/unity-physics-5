@@ -9,8 +9,8 @@ namespace PhysX
     {
         public bool convex;
 
-        [SerializeField]
-        private Mesh _sharedMesh;
+        public Mesh sharedMesh;
+
         private Mesh _lastSharedMesh;
         private Vector3 _lastScale;
         private bool _lastPhysicsStatic;
@@ -19,11 +19,6 @@ namespace PhysX
         public PxTriangleMesh* triangleMesh { get; private set; }
         public PxConvexMesh* convexMesh { get; private set; }
 
-        public Mesh sharedMesh
-        {
-            get => _sharedMesh;
-            set => _sharedMesh = value;
-        }
 
         protected override void Awake()
         {
@@ -32,7 +27,7 @@ namespace PhysX
             _lastScale = GetPhysicsScale();
             _lastPhysicsStatic = actorIsStatic;
             _lastKinematic = actorIsKinematic;
-            if (_sharedMesh != null)
+            if (sharedMesh != null)
             {
                 RebuildShape();
             }
@@ -51,7 +46,7 @@ namespace PhysX
                 needsRebuild = true;
             }
 
-            if (_sharedMesh != _lastSharedMesh)
+            if (sharedMesh != _lastSharedMesh)
             {
                 needsRebuild = true;
             }
@@ -64,7 +59,7 @@ namespace PhysX
             }
 
             var scale = GetPhysicsScale();
-            if (_sharedMesh != null && scale != _lastScale)
+            if (sharedMesh != null && scale != _lastScale)
             {
                 needsRebuild = true;
             }
@@ -104,10 +99,10 @@ namespace PhysX
         private void RebuildShape()
         {
             var scale = GetPhysicsScale();
-            if (_sharedMesh == null || !_sharedMesh.isReadable)
+            if (sharedMesh == null || !sharedMesh.isReadable)
             {
                 ReleaseShape();
-                _lastSharedMesh = _sharedMesh;
+                _lastSharedMesh = sharedMesh;
                 _lastScale = scale;
                 _lastKinematic = actorIsKinematic;
                 return;
@@ -129,13 +124,13 @@ namespace PhysX
                 if (!TriangleMeshAllowedForCurrentActor())
                 {
                     Debug.LogWarning("Triangular concave meshes can't be assigned to dynamic rigidbodies");
-                    _lastSharedMesh = _sharedMesh;
+                    _lastSharedMesh = sharedMesh;
                     _lastScale = scale;
                     return;
                 }
 
-                PhysicsManager.instance.BakeMesh(_sharedMesh, convex: false);
-                triangleMesh = PhysicsManager.instance.GetTriangleMesh(_sharedMesh);
+                PhysicsManager.instance.BakeMesh(sharedMesh, convex: false);
+                triangleMesh = PhysicsManager.instance.GetTriangleMesh(sharedMesh);
                 if (triangleMesh == null)
                 {
                     throw new Exception("Could not retrieve baked PhysX triangle mesh");
@@ -152,8 +147,8 @@ namespace PhysX
             }
             else
             {
-                PhysicsManager.instance.BakeMesh(_sharedMesh, convex: true);
-                convexMesh = PhysicsManager.instance.GetConvexMesh(_sharedMesh);
+                PhysicsManager.instance.BakeMesh(sharedMesh, convex: true);
+                convexMesh = PhysicsManager.instance.GetConvexMesh(sharedMesh);
                 if (convexMesh == null)
                 {
                     throw new Exception("Could not retrieve baked PhysX convex mesh");
@@ -174,7 +169,7 @@ namespace PhysX
                 AttachShape(_shape);
             }
 
-            _lastSharedMesh = _sharedMesh;
+            _lastSharedMesh = sharedMesh;
             _lastScale = scale;
             _lastKinematic = actorIsKinematic;
         }
