@@ -59,7 +59,7 @@ namespace PhysX
         [SerializeField] private float _maxJumpHeight;
         [SerializeField] private float _minDist = 0.001f;
         [SerializeField] private float _scaleCoeff = 0.8f;
-        [SerializeField] private float _volumeGrowth = 2.0f;
+        [SerializeField] private float _volumeGrowth = 1.5f;
         [SerializeField] private Vector3 _upDirection = Vector3.up;
         [SerializeField] private PxControllerNonWalkableMode _nonWalkableMode = PxControllerNonWalkableMode.PreventClimbing;
 
