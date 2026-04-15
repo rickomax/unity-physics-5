@@ -27,9 +27,13 @@ namespace PhysX
         private delegate PxQueryHitType PreFilterDelegate(PxRigidActor* rigidActor, PxFilterData* filterData, PxShape* shape, uint hitFlags, void* userData);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate PxQueryHitType PostFilterDelegate(PxFilterData* filterData, PxQueryHit* hit, void* userData);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void ReportErrorDelegate(PxErrorCode code, sbyte* message, sbyte* file, uint line, void* userData);
 
         private const int MaxHits = 2048;
+        private const float InitialOverlapEpsilon = 1e-4f;
         private const uint PhysXVersionMajor = 5u;
         private const uint PhysXVersionMinor = 1u;
         private const uint PhysXVersionBugfix = 3u;
@@ -38,10 +42,12 @@ namespace PhysX
         private static readonly ReportErrorDelegate _reportError = ReportError;
         private static readonly CustomFilterShaderDelegate _customFilterShader = CustomFilterShader;
         private static readonly ContactDelegate _contact = Contact;
-        //private static readonly PreFilterDelegate _blockingPreFilter = BlockingPreFilter;
+        private static readonly PreFilterDelegate _blockingPreFilter = BlockingPreFilter;
         private static readonly PreFilterDelegate _nonBlockingPreFilter = NonBlockingPreFilter;
-        //private static readonly IntPtr _blockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPreFilter);
+        private static readonly PostFilterDelegate _blockingPostFilter = BlockingPostFilter;
+        private static readonly IntPtr _blockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPreFilter);
         private static readonly IntPtr _nonBlockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_nonBlockingPreFilter);
+        private static readonly IntPtr _blockingPostFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPostFilter);
 
         public int layerCount = 32;
         public float toleranceLength = 1f;
@@ -74,12 +80,12 @@ namespace PhysX
         private PxSceneDesc* _sceneDesc;
         private IntPtr _sceneDescPtr;
         private PxSimulationEventCallback* _simulationEventCallback;
-        //private PxQueryFilterCallback* _blockingQueryFilterCallback;
+        private PxQueryFilterCallback* _blockingQueryFilterCallback;
         private PxQueryFilterCallback* _nonBlockingQueryFilterCallback;
 
         private byte* _scratchBuffer;
 
-        public uint scratchBlockSize = 64;
+        public uint scratchBlockSize = 16 * 1024;
 
         public static PhysicsManager instance { get; private set; }
         public static bool isShuttingDown { get; private set; }
@@ -170,9 +176,10 @@ namespace PhysX
 
             PxScene_setSimulationEventCallback_mut(_scene, _simulationEventCallback);
 
-            //_blockingQueryFilterCallback = create_raycast_filter_callback_func(
-            //    (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_blockingPreFilterPtr,
-            //    null);
+            _blockingQueryFilterCallback = create_pre_and_post_raycast_filter_callback_func(
+                (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_blockingPreFilterPtr,
+                (delegate* unmanaged[Cdecl]<PxFilterData*, PxQueryHit*, void*, PxQueryHitType>)_blockingPostFilterPtr,
+                null);
 
             _nonBlockingQueryFilterCallback = create_raycast_filter_callback_func(
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_nonBlockingPreFilterPtr,
@@ -225,7 +232,6 @@ namespace PhysX
                 }
                 UpdateInternal();
                 _nextUpdateTime = Time.time + updateInterval;
-
             }
         }
 
@@ -285,11 +291,11 @@ namespace PhysX
                 PxSimulationEventCallback_delete(_simulationEventCallback);
                 _simulationEventCallback = null;
             }
-            //if (_blockingQueryFilterCallback != null)
-            //{
-            //    PxQueryFilterCallback_delete(_blockingQueryFilterCallback);
-            //    _blockingQueryFilterCallback = null;
-            //}
+            if (_blockingQueryFilterCallback != null)
+            {
+                PxQueryFilterCallback_delete(_blockingQueryFilterCallback);
+                _blockingQueryFilterCallback = null;
+            }
             if (_nonBlockingQueryFilterCallback != null)
             {
                 PxQueryFilterCallback_delete(_nonBlockingQueryFilterCallback);
@@ -339,6 +345,11 @@ namespace PhysX
             {
                 PxErrorCallback_delete(_errorCallback);
                 _errorCallback = null;
+            }
+            if (_scratchBuffer != null)
+            {
+                UnsafeUtility.Free(_scratchBuffer, Allocator.Persistent);
+                _scratchBuffer = null;
             }
         }
 
@@ -472,20 +483,19 @@ namespace PhysX
                 geometryA, &poseA, geometryB, &poseB, PxGeometryQueryFlags.SimdGuard);
         }
 
-        public bool Linecast(Vector3 origin, Vector3 target, out RaycastHit raycastHit, int mask, bool hitTriggers = false, bool assumeNoInitialOverlap = true)
+        public bool Linecast(Vector3 origin, Vector3 target, out RaycastHit raycastHit, int mask, bool hitTriggers = false)
         {
             var toTarget = target - origin;
-            return Raycast(origin, toTarget.normalized, toTarget.magnitude, out raycastHit, mask, hitTriggers, assumeNoInitialOverlap);
+            return Raycast(origin, toTarget.normalized, toTarget.magnitude, out raycastHit, mask, hitTriggers);
         }
 
-        public int LinecastAll(Vector3 origin, Vector3 target, RaycastHit[] raycastHits, int mask, out bool outBlockingHit, bool hitTriggers = false, bool assumeNoInitialOverlap = true)
+        public int LinecastAll(Vector3 origin, Vector3 target, RaycastHit[] raycastHits, int mask, out bool outBlockingHit, bool hitTriggers = false)
         {
             var toTarget = target - origin;
-            var result = RaycastAll(origin, toTarget.normalized, toTarget.magnitude, raycastHits, mask, out outBlockingHit, hitTriggers, assumeNoInitialOverlap);
-            return result;
+            return RaycastAll(origin, toTarget.normalized, toTarget.magnitude, raycastHits, mask, out outBlockingHit, hitTriggers);
         }
 
-        public bool Raycast(Vector3 origin, Vector3 direction, float distance, out RaycastHit raycastHit, int mask, bool hitTriggers = false, bool assumeNoInitialOverlap = true)
+        public bool Raycast(Vector3 origin, Vector3 direction, float distance, out RaycastHit raycastHit, int mask, bool hitTriggers = false)
         {
             if (float.IsInfinity(distance))
             {
@@ -493,19 +503,15 @@ namespace PhysX
             }
             direction.Normalize();
             var outputFlags = PxHitFlags.Default | PxHitFlags.Position | PxHitFlags.Normal | PxHitFlags.Uv;
-            if (assumeNoInitialOverlap)
-            {
-                outputFlags |= PxHitFlags.AssumeNoInitialOverlap;
-            }
             var filterData = PxQueryFilterData_new();
-            filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
+            filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
             if (hitTriggers)
             {
                 filterData.flags |= PxQueryFlags.AnyHit;
             }
             filterData.data.word0 = (uint)mask;
             PxRaycastHit pxRaycastHit = default;
-            var result = PxSceneQueryExt_raycastSingle(_scene, (PxVec3*)&origin, (PxVec3*)&direction, distance, outputFlags, &pxRaycastHit, &filterData, _nonBlockingQueryFilterCallback, null);
+            var result = PxSceneQueryExt_raycastSingle(_scene, (PxVec3*)&origin, (PxVec3*)&direction, distance, outputFlags, &pxRaycastHit, &filterData, _blockingQueryFilterCallback, null);
             raycastHit.distance = pxRaycastHit.distance;
             raycastHit.position = pxRaycastHit.position;
             raycastHit.collider = GetCollider((PxActor*)pxRaycastHit.actor, pxRaycastHit.shape);
@@ -517,7 +523,7 @@ namespace PhysX
             return result;
         }
 
-        public int RaycastAll(Vector3 origin, Vector3 direction, float distance, RaycastHit[] raycastHits, int mask, out bool outBlockingHit, bool hitTriggers = false, bool assumeNoInitialOverlap = true)
+        public int RaycastAll(Vector3 origin, Vector3 direction, float distance, RaycastHit[] raycastHits, int mask, out bool outBlockingHit, bool hitTriggers = false)
         {
             if (raycastHits == null)
             {
@@ -529,10 +535,6 @@ namespace PhysX
             }
             direction.Normalize();
             var outputFlags = PxHitFlags.Default | PxHitFlags.Position | PxHitFlags.Normal | PxHitFlags.Uv;
-            if (assumeNoInitialOverlap)
-            {
-                outputFlags |= PxHitFlags.AssumeNoInitialOverlap;
-            }
             var filterData = PxQueryFilterData_new();
             filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
             if (hitTriggers)
@@ -564,18 +566,17 @@ namespace PhysX
 
         public bool Overlap(Collider collider, Vector3 position, Quaternion rotation, out OverlapHit overlapHit, int mask)
         {
-            var queryShape = collider.shape;
-            if (queryShape == null)
+            if (collider.shape == null)
             {
                 throw new NullReferenceException();
             }
-            var geometry = PxShape_getGeometry(queryShape);
+            var geometry = PxShape_getGeometry(collider.shape);
             var pose = collider.GetQueryPose(position, rotation);
             PxOverlapHit pxOverlapHit = default;
             var filterData = PxQueryFilterData_new();
             filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
             filterData.data.word0 = (uint)mask;
-            var result = PxSceneQueryExt_overlapAny(_scene, geometry, &pose, &pxOverlapHit, &filterData, _nonBlockingQueryFilterCallback);
+            var result = PxSceneQueryExt_overlapAny(_scene, geometry, &pose, &pxOverlapHit, &filterData, _blockingQueryFilterCallback);
             overlapHit.collider = GetCollider((PxActor*)pxOverlapHit.actor, pxOverlapHit.shape);
             overlapHit.faceIndex = (int)pxOverlapHit.faceIndex;
             return result;
@@ -583,21 +584,21 @@ namespace PhysX
 
         public int OverlapAll(Collider collider, Vector3 position, Quaternion rotation, OverlapHit[] overlapHits, int mask)
         {
+            if (collider.shape == null)
+            {
+                throw new NullReferenceException();
+            }
             if (overlapHits == null)
             {
                 throw new ArgumentNullException(nameof(overlapHits));
             }
+
             if (overlapHits.Length > MaxHits)
             {
                 throw new IndexOutOfRangeException("Please increase the MaxHits constant");
             }
 
-            var queryShape = collider.shape;
-            if (queryShape == null)
-            {
-                throw new NullReferenceException();
-            }
-            var geometry = PxShape_getGeometry(queryShape);
+            var geometry = PxShape_getGeometry(collider.shape);
             var pose = collider.GetQueryPose(position, rotation);
             var filterData = PxQueryFilterData_new();
             filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
@@ -617,28 +618,28 @@ namespace PhysX
 
         public bool Sweep(Collider collider, Vector3 position, Quaternion rotation, Vector3 direction, float distance, out SweepHit sweepHit, int mask, bool hitTriggers = false, float inflation = 0f)
         {
+            if (collider.shape == null)
+            {
+                throw new NullReferenceException();
+            }
             if (float.IsInfinity(distance))
             {
                 distance = float.MaxValue;
             }
+
             direction.Normalize();
-            var queryShape = collider.shape;
-            if (queryShape == null)
-            {
-                throw new NullReferenceException();
-            }
-            var geometry = PxShape_getGeometry(queryShape);
+            var geometry = PxShape_getGeometry(collider.shape);
             var pose = collider.GetQueryPose(position, rotation);
             var outputFlags = PxHitFlags.Default | PxHitFlags.Position | PxHitFlags.Normal | PxHitFlags.Uv | PxHitFlags.PreciseSweep;
             var filterData = PxQueryFilterData_new();
-            filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
+            filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
             if (hitTriggers)
             {
                 filterData.flags |= PxQueryFlags.AnyHit;
             }
             filterData.data.word0 = (uint)mask;
             PxSweepHit pxSweepHit = default;
-            var result = PxSceneQueryExt_sweepSingle(_scene, geometry, &pose, (PxVec3*)&direction, distance, outputFlags, &pxSweepHit, &filterData, _nonBlockingQueryFilterCallback, null, inflation);
+            var result = PxSceneQueryExt_sweepSingle(_scene, geometry, &pose, (PxVec3*)&direction, distance, outputFlags, &pxSweepHit, &filterData, _blockingQueryFilterCallback, null, inflation);
             sweepHit = default;
             sweepHit.collider = GetCollider((PxActor*)pxSweepHit.actor, pxSweepHit.shape);
             sweepHit.distance = pxSweepHit.distance;
@@ -651,6 +652,10 @@ namespace PhysX
 
         public int SweepAll(Collider collider, Vector3 position, Quaternion rotation, Vector3 direction, float distance, SweepHit[] sweepHits, int mask, out bool outBlockingHit, bool hitTriggers = false, float inflation = 0f)
         {
+            if (collider.shape == null)
+            {
+                throw new NullReferenceException();
+            }
             if (sweepHits == null)
             {
                 throw new ArgumentNullException(nameof(sweepHits));
@@ -660,12 +665,7 @@ namespace PhysX
                 distance = float.MaxValue;
             }
             direction.Normalize();
-            var queryShape = collider.shape;
-            if (queryShape == null)
-            {
-                throw new NullReferenceException();
-            }
-            var geometry = PxShape_getGeometry(queryShape);
+            var geometry = PxShape_getGeometry(collider.shape);
             var pose = collider.GetQueryPose(position, rotation);
             var outputFlags = PxHitFlags.Default | PxHitFlags.Position | PxHitFlags.Normal | PxHitFlags.Uv | PxHitFlags.PreciseSweep;
             var filterData = PxQueryFilterData_new();
@@ -838,15 +838,32 @@ namespace PhysX
             return (queryFilterData->word0 & shapeFilterData.word0) != 0 ? PxQueryHitType.Block : PxQueryHitType.None;
         }
 
-        //[MonoPInvokeCallback(typeof(PreFilterDelegate))]
-        //private static PxQueryHitType BlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
-        //{
-        //    return FilterByLayer(queryFilterData, shape);
-        //}
+        [MonoPInvokeCallback(typeof(PreFilterDelegate))]
+        private static PxQueryHitType BlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
+        {
+            if (userData != null && rigidActor == (PxRigidActor*)userData)
+            {
+                return PxQueryHitType.None;
+            }
+
+            return FilterByLayer(queryFilterData, shape);
+        }
+
+        [MonoPInvokeCallback(typeof(PostFilterDelegate))]
+        private static PxQueryHitType BlockingPostFilter(PxFilterData* filterData, PxQueryHit* hit, void* userData)
+        {
+            var raycastHit = (PxRaycastHit*)hit;
+            return raycastHit->distance <= InitialOverlapEpsilon ? PxQueryHitType.None : PxQueryHitType.Block;
+        }
 
         [MonoPInvokeCallback(typeof(PreFilterDelegate))]
         private static PxQueryHitType NonBlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
         {
+            if (userData != null && rigidActor == (PxRigidActor*)userData)
+            {
+                return PxQueryHitType.None;
+            }
+
             var result = FilterByLayer(queryFilterData, shape);
             return result == PxQueryHitType.Block ? PxQueryHitType.Touch : result;
         }
@@ -869,6 +886,7 @@ namespace PhysX
             {
                 return 32;
             }
+
             var count = 0;
             while ((value & 1u) == 0u) { value >>= 1; count++; }
             return count;

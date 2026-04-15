@@ -1,5 +1,7 @@
 using MagicPhysX;
+using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
@@ -51,6 +53,7 @@ namespace PhysX
         protected PxMaterial* _material;
         protected PxTransform _offset;
         protected PxShape* _shape;
+        protected PxRigidActor* _shapeActor;
         protected bool _released;
         protected Rigidbody _attachedRigidbody;
         protected bool _shapeDirty;
@@ -59,7 +62,6 @@ namespace PhysX
         private Transform _rigidbodyTransform;
         private bool _offsetDirty;
         private int _lastLayer;
-
         protected virtual bool supportsAttachedRigidbody => true;
 
         public virtual PxRigidActor* actor => _attachedRigidbody == null ? null : _attachedRigidbody.actor;
@@ -89,6 +91,11 @@ namespace PhysX
             }
 
             Release();
+        }
+
+        private void Start()
+        {
+            ResolveAttachedRigidbody();
         }
 
         private void OnEnable()
@@ -222,6 +229,7 @@ namespace PhysX
             }
 
             PxRigidActor_attachShape_mut(actor, shapeToAttach);
+            _shapeActor = actor;
             PhysicsManager.instance.RegisterShape(shapeToAttach, this);
         }
 
@@ -233,9 +241,11 @@ namespace PhysX
             }
 
             PhysicsManager.instance.UnregisterShape(shapeToDetach);
-            if (actor != null)
+
+            if (_shapeActor != null)
             {
-                PxRigidActor_detachShape_mut(actor, shapeToDetach, true);
+                PxRigidActor_detachShape_mut(_shapeActor, shapeToDetach, true);
+                _shapeActor = null;
             }
         }
 
@@ -291,7 +301,7 @@ namespace PhysX
             _offset = PxTransform_new_5(&pxPosition, &pxRotation);
         }
 
-        private void ResolveAttachedRigidbody()
+        internal void ResolveAttachedRigidbody()
         {
             if (!supportsAttachedRigidbody)
             {

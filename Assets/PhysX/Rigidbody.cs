@@ -2,6 +2,7 @@ using MagicPhysX;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
@@ -242,6 +243,15 @@ namespace PhysX
             for (var i = 0; i < _colliders.Count; i++)
             {
                 _colliders[i]?.AttachExistingShape();
+            }
+
+            var allColliders = GetComponentsInChildren<Collider>(true);
+            foreach (var col in allColliders)
+            {
+                if (col.usesDummyRigidbody)
+                {
+                    col.ResolveAttachedRigidbody();
+                }
             }
         }
 
