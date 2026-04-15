@@ -141,7 +141,7 @@ namespace PhysX
                 _slopeLimit = value;
                 if (_controller != null)
                 {
-                    PxController_setSlopeLimit_mut(_controller, value);
+                    PxController_setSlopeLimit_mut(_controller, value * Mathf.Deg2Rad);
                 }
             }
         }
