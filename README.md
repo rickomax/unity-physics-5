@@ -64,7 +64,7 @@ Several methods emulate Unity’s Physics API, with some differences:
 
 - `BakeMesh`
   - Similar to Unity’s `Physics.BakeMesh`, but accepts a `Mesh` as input
-  - Cooking options are not exposed yet (TODO)
+  - Cooking options are not exposed yet (todo)
 
 #### Penetration
 
