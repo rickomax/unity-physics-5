@@ -1,0 +1,16 @@
+{
+    "name": "PhysX",
+    "rootNamespace": "",
+    "references": [
+        "GUID:5b02769410d568f419ae5ffd886f59ca"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
