@@ -7,26 +7,46 @@ namespace PhysX
 {
     public unsafe class MeshCollider : Collider
     {
-        public bool convex;
+        [SerializeField] private bool _convex;
+        [SerializeField] private Mesh _sharedMesh;
 
-        public Mesh sharedMesh;
+        public bool convex
+        {
+            get => _convex;
+            set
+            {
+                if (_convex == value)
+                {
+                    return;
+                }
 
-        private Mesh _lastSharedMesh;
-        private Vector3 _lastScale;
-        private bool _lastPhysicsStatic;
-        private bool _lastKinematic;
+                _convex = value;
+                _shapeDirty = true;
+            }
+        }
+
+        public Mesh sharedMesh
+        {
+            get => _sharedMesh;
+            set
+            {
+                if (_sharedMesh == value)
+                {
+                    return;
+                }
+
+                _sharedMesh = value;
+                _shapeDirty = true;
+            }
+        }
 
         public PxTriangleMesh* triangleMesh { get; private set; }
         public PxConvexMesh* convexMesh { get; private set; }
-
 
         protected override void Awake()
         {
             base.Awake();
             CreateActor();
-            _lastScale = GetPhysicsScale();
-            _lastPhysicsStatic = actorIsStatic;
-            _lastKinematic = actorIsKinematic;
             if (sharedMesh != null)
             {
                 RebuildShape();
@@ -36,38 +56,17 @@ namespace PhysX
         protected override void Update()
         {
             base.Update();
-
-            var needsRebuild = false;
-
-            if (actorIsStatic != _lastPhysicsStatic)
-            {
-                _lastPhysicsStatic = actorIsStatic;
-                _lastKinematic = actorIsKinematic;
-                needsRebuild = true;
-            }
-
-            if (sharedMesh != _lastSharedMesh)
-            {
-                needsRebuild = true;
-            }
-
-            var currentKinematic = actorIsKinematic;
-            if (!convex && currentKinematic != _lastKinematic)
-            {
-                _lastKinematic = currentKinematic;
-                needsRebuild = true;
-            }
-
-            var scale = GetPhysicsScale();
-            if (sharedMesh != null && scale != _lastScale)
-            {
-                needsRebuild = true;
-            }
-
-            if (needsRebuild)
+            if (_shapeDirty || _transform.hasChanged)
             {
                 RebuildShape();
+                _shapeDirty = false;
+                _transform.hasChanged = false;
             }
+        }
+
+        public override void SetShapeDirty()
+        {
+            _shapeDirty = true;
         }
 
         public override void Release()
@@ -98,13 +97,9 @@ namespace PhysX
 
         private void RebuildShape()
         {
-            var scale = GetPhysicsScale();
             if (sharedMesh == null || !sharedMesh.isReadable)
             {
                 ReleaseShape();
-                _lastSharedMesh = sharedMesh;
-                _lastScale = scale;
-                _lastKinematic = actorIsKinematic;
                 return;
             }
 
@@ -119,13 +114,13 @@ namespace PhysX
 
             ReleaseShape();
 
+            var scale = GetPhysicsScale();
+
             if (!convex)
             {
                 if (!TriangleMeshAllowedForCurrentActor())
                 {
                     Debug.LogWarning("Triangular concave meshes can't be assigned to dynamic rigidbodies");
-                    _lastSharedMesh = sharedMesh;
-                    _lastScale = scale;
                     return;
                 }
 
@@ -168,10 +163,6 @@ namespace PhysX
             {
                 AttachShape(_shape);
             }
-
-            _lastSharedMesh = sharedMesh;
-            _lastScale = scale;
-            _lastKinematic = actorIsKinematic;
         }
     }
 }

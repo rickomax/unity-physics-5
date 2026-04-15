@@ -6,10 +6,22 @@ namespace PhysX
 {
     public unsafe class BoxCollider : Collider
     {
-        public Vector3 halfExtents = new Vector3(0.5f, 0.5f, 0.5f);
+        [SerializeField] private Vector3 _halfExtents = new Vector3(0.5f, 0.5f, 0.5f);
 
-        private Vector3 _lastHalfExtents;
-        private Vector3 _lastScale;
+        public Vector3 halfExtents
+        {
+            get => _halfExtents;
+            set
+            {
+                if (_halfExtents == value)
+                {
+                    return;
+                }
+
+                _halfExtents = value;
+                _shapeDirty = true;
+            }
+        }
 
         protected override void Awake()
         {
@@ -21,10 +33,11 @@ namespace PhysX
         protected override void Update()
         {
             base.Update();
-            var scale = GetPhysicsScale();
-            if (halfExtents != _lastHalfExtents || scale != _lastScale)
+            if (_shapeDirty || _transform.hasChanged)
             {
                 RebuildShape();
+                _shapeDirty = false;
+                _transform.hasChanged = false;
             }
         }
 
@@ -45,9 +58,6 @@ namespace PhysX
                 CreateShape((PxGeometry*)&geometry);
                 AttachShape(_shape);
             }
-
-            _lastHalfExtents = halfExtents;
-            _lastScale = scale;
         }
     }
 }

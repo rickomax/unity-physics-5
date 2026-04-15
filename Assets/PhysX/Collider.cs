@@ -7,28 +7,58 @@ namespace PhysX
 {
     public abstract unsafe class Collider : MonoBehaviour
     {
-        public Vector3 center;
         public float density = 10f;
         public float dynamicFriction = 0.6f;
-        public bool isTrigger;
         public float restitution = 0.6f;
         public float staticFriction = 0.6f;
+
+        [SerializeField] private Vector3 _center;
+        [SerializeField] private bool _isTrigger;
+
+        public Vector3 center
+        {
+            get => _center;
+            set
+            {
+                if (_center == value)
+                {
+                    return;
+                }
+
+                _center = value;
+                _offsetDirty = true;
+            }
+        }
+
+        public bool isTrigger
+        {
+            get => _isTrigger;
+            set
+            {
+                if (_isTrigger == value)
+                {
+                    return;
+                }
+
+                _isTrigger = value;
+                if (_shape != null)
+                {
+                    ApplyShapeFlags(_shape);
+                }
+            }
+        }
 
         protected PxMaterial* _material;
         protected PxTransform _offset;
         protected PxShape* _shape;
         protected bool _released;
         protected Rigidbody _attachedRigidbody;
+        protected bool _shapeDirty;
 
         protected Transform _transform;
         private Transform _rigidbodyTransform;
-
-        private Vector3 _lastLocalPosition;
-        private Quaternion _lastLocalRotation;
-        private Vector3 _lastCenter;
-
+        private bool _offsetDirty;
         private int _lastLayer;
-        private bool _lastEnabled;
 
         protected virtual bool supportsAttachedRigidbody => true;
 
@@ -47,10 +77,8 @@ namespace PhysX
             _transform = transform;
             _material = PxPhysics_createMaterial_mut(PhysicsManager.instance.physics, staticFriction, dynamicFriction, restitution);
             _lastLayer = gameObject.layer;
-            _lastEnabled = enabled;
             ResolveAttachedRigidbody();
             RefreshShapeOffset();
-            SeedOffsetCache();
         }
 
         private void OnDestroy()
@@ -63,26 +91,35 @@ namespace PhysX
             Release();
         }
 
-        protected virtual void Update()
+        private void OnEnable()
         {
             if (_shape != null)
             {
-                if (_lastEnabled != enabled)
-                {
-                    ApplyShapeFlags(_shape);
-                    _lastEnabled = enabled;
-                }
+                ApplyShapeFlags(_shape);
+            }
+        }
 
-                if (gameObject.layer != _lastLayer)
-                {
-                    SetupFilterData(_shape);
-                    _lastLayer = gameObject.layer;
-                }
+        private void OnDisable()
+        {
+            if (_shape != null)
+            {
+                ApplyShapeFlags(_shape);
+            }
+        }
+
+        protected virtual void Update()
+        {
+            if (_shape != null && gameObject.layer != _lastLayer)
+            {
+                SetupFilterData(_shape);
+                _lastLayer = gameObject.layer;
             }
 
-            if (hasAttachedRigidbody)
+            if (hasAttachedRigidbody && (_offsetDirty || _transform.hasChanged))
             {
-                UpdateShapeLocalPose(false);
+                UpdateShapeLocalPose();
+                _offsetDirty = false;
+                _transform.hasChanged = false;
             }
         }
 
@@ -114,21 +151,14 @@ namespace PhysX
             }
         }
 
+        public virtual void SetShapeDirty()
+        {
+            _shapeDirty = true;
+        }
+
         protected virtual Vector3 GetPhysicsScale()
         {
             return _transform.lossyScale;
-        }
-
-        private void SeedOffsetCache()
-        {
-            _lastLocalPosition = _transform.localPosition;
-            _lastLocalRotation = _transform.localRotation;
-            _lastCenter = center;
-        }
-
-        private void InvalidateOffsetCache()
-        {
-            _lastLocalPosition = _transform.localPosition + Vector3.one;
         }
 
         internal virtual PxTransform GetQueryPose(Vector3 worldPosition, Quaternion worldRotation)
@@ -172,7 +202,6 @@ namespace PhysX
             }
 
             ResolveAttachedRigidbody();
-
             if (_attachedRigidbody != null)
             {
                 _attachedRigidbody.EnsureActorCreated();
@@ -238,20 +267,13 @@ namespace PhysX
             PxShape_setSimulationFilterData_mut(targetShape, &filterData);
         }
 
-        protected void UpdateShapeLocalPose(bool force)
+        protected void UpdateShapeLocalPose()
         {
             if (_shape == null || _attachedRigidbody == null)
             {
                 return;
             }
-            if (!force
-                && center == _lastCenter
-                && Approximately(_transform.localPosition, _lastLocalPosition)
-                && Approximately(_transform.localRotation, _lastLocalRotation))
-            {
-                return;
-            }
-            SeedOffsetCache();
+
             RefreshShapeOffset();
             PxShape_setLocalPose_mut(_shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
         }
@@ -298,7 +320,7 @@ namespace PhysX
             if (_attachedRigidbody != null)
             {
                 _attachedRigidbody.RegisterCollider(this);
-                InvalidateOffsetCache(); // force recompute against the new rigidbody next frame
+                _offsetDirty = true;
             }
         }
 
@@ -317,16 +339,6 @@ namespace PhysX
                 PxShape_setFlag_mut(targetShape, PxShapeFlag.SimulationShape, shapeEnabled);
                 PxShape_setFlag_mut(targetShape, PxShapeFlag.SceneQueryShape, shapeEnabled);
             }
-        }
-
-        private static bool Approximately(Vector3 a, Vector3 b)
-        {
-            return (a - b).sqrMagnitude <= 0.000001f;
-        }
-
-        private static bool Approximately(Quaternion a, Quaternion b)
-        {
-            return Mathf.Abs(Quaternion.Dot(a, b)) >= 0.999999f;
         }
     }
 }

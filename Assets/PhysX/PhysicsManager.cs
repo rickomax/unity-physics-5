@@ -203,7 +203,11 @@ namespace PhysX
 
         private void StartPVDExtensions()
         {
-            if (_scene == null) return;
+            if (_scene == null)
+            {
+                return;
+            }
+
             var pvdClient = PxScene_getScenePvdClient_mut(_scene);
             if (pvdClient != null)
             {

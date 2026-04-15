@@ -6,10 +6,22 @@ namespace PhysX
 {
     public unsafe class SphereCollider : Collider
     {
-        public float radius = 0.5f;
+        [SerializeField] private float _radius = 0.5f;
 
-        private float _lastRadius;
-        private Vector3 _lastScale;
+        public float radius
+        {
+            get => _radius;
+            set
+            {
+                if (_radius == value)
+                {
+                    return;
+                }
+
+                _radius = value;
+                _shapeDirty = true;
+            }
+        }
 
         protected override void Awake()
         {
@@ -21,10 +33,11 @@ namespace PhysX
         protected override void Update()
         {
             base.Update();
-            var scale = GetPhysicsScale();
-            if (radius != _lastRadius || scale != _lastScale)
+            if (_shapeDirty || _transform.hasChanged)
             {
                 RebuildShape();
+                _shapeDirty = false;
+                _transform.hasChanged = false;
             }
         }
 
@@ -45,9 +58,6 @@ namespace PhysX
                 CreateShape((PxGeometry*)&geometry);
                 AttachShape(_shape);
             }
-
-            _lastRadius = radius;
-            _lastScale = scale;
         }
     }
 }

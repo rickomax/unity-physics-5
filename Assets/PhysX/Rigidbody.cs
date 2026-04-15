@@ -12,17 +12,13 @@ namespace PhysX
     {
         [SerializeField] private bool _kinematic;
         [SerializeField] private bool _useGravity = true;
-
-        public bool physicsStatic;
+        [SerializeField] private bool _physicsStatic;
 
         private readonly List<Collider> _colliders = new List<Collider>();
         private bool _released;
-        private bool _isDummy;
-        private bool _lastPhysicsStatic;
+
         private Vector3 _kinematicTargetPosition;
         private Quaternion _kinematicTargetRotation;
-        private Vector3 _lastTransformPosition;
-        private Quaternion _lastTransformRotation;
 
         public PxRigidDynamic* rigidDynamic { get; private set; }
         public PxRigidStatic* rigidStatic { get; private set; }
@@ -32,11 +28,36 @@ namespace PhysX
         public Vector3 physicsPosition => rigidDynamic != null && isKinematic ? _kinematicTargetPosition : position;
         public Quaternion physicsRotation => rigidDynamic != null && isKinematic ? _kinematicTargetRotation : rotation;
 
+        public bool physicsStatic
+        {
+            get => _physicsStatic;
+            set
+            {
+                if (_physicsStatic == value)
+                {
+                    return;
+                }
+
+                _physicsStatic = value;
+                if (actor != null || rigidDynamic != null || rigidStatic != null)
+                {
+                    RecreateActor();
+                }
+
+                NotifyCollidersShapeDirty();
+            }
+        }
+
         public bool isKinematic
         {
             get => !physicsStatic && _kinematic;
             set
             {
+                if (_kinematic == value)
+                {
+                    return;
+                }
+
                 _kinematic = value;
                 if (physicsStatic || rigidDynamic == null)
                 {
@@ -45,6 +66,7 @@ namespace PhysX
 
                 PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.Kinematic, value);
                 PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.UseKinematicTargetForSceneQueries, value);
+                NotifyCollidersShapeDirty();
             }
         }
 
@@ -64,7 +86,7 @@ namespace PhysX
                 if (actor == null)
                 {
                     transform.position = value;
-                    CacheTransformState();
+                    transform.hasChanged = false;
                     return;
                 }
 
@@ -89,7 +111,7 @@ namespace PhysX
                 if (actor == null)
                 {
                     transform.rotation = value;
-                    CacheTransformState();
+                    transform.hasChanged = false;
                     return;
                 }
 
@@ -149,18 +171,15 @@ namespace PhysX
         {
             _kinematicTargetPosition = transform.position;
             _kinematicTargetRotation = transform.rotation;
-            CacheTransformState();
             EnsureActorCreated();
-            _lastPhysicsStatic = physicsStatic;
         }
 
         internal void InitializeAsDummyStatic()
         {
-            physicsStatic = true;
+            _physicsStatic = true;
             _kinematic = false;
             _useGravity = false;
             EnsureActorCreated();
-            _lastPhysicsStatic = physicsStatic;
         }
 
         private void OnDestroy()
@@ -185,14 +204,9 @@ namespace PhysX
 
         private void Update()
         {
-            if (physicsStatic != _lastPhysicsStatic)
+            if (actor != null && transform.hasChanged)
             {
-                RecreateActor();
-                _lastPhysicsStatic = physicsStatic;
-            }
-
-            if (actor != null && TransformChanged())
-            {
+                transform.hasChanged = false;
                 SyncPhysicsFromTransform();
             }
         }
@@ -281,7 +295,7 @@ namespace PhysX
 
             transform.position = position;
             transform.rotation = rotation;
-            CacheTransformState();
+            transform.hasChanged = false;
         }
 
         public void SyncTransformFromPhysics()
@@ -300,7 +314,7 @@ namespace PhysX
                 _kinematicTargetRotation = transform.rotation;
             }
 
-            CacheTransformState();
+            transform.hasChanged = false;
         }
 
         public void Release()
@@ -409,29 +423,14 @@ namespace PhysX
             {
                 PxRigidActor_setGlobalPose_mut(actor, &pose, true);
             }
-
-            CacheTransformState();
         }
 
-        private bool TransformChanged()
+        private void NotifyCollidersShapeDirty()
         {
-            return !Approximately(transform.position, _lastTransformPosition) || !Approximately(transform.rotation, _lastTransformRotation);
-        }
-
-        private void CacheTransformState()
-        {
-            _lastTransformPosition = transform.position;
-            _lastTransformRotation = transform.rotation;
-        }
-
-        private static bool Approximately(Vector3 a, Vector3 b)
-        {
-            return (a - b).sqrMagnitude <= 0.000001f;
-        }
-
-        private static bool Approximately(Quaternion a, Quaternion b)
-        {
-            return Mathf.Abs(Quaternion.Dot(a, b)) >= 0.999999f;
+            for (var i = 0; i < _colliders.Count; i++)
+            {
+                _colliders[i]?.SetShapeDirty();
+            }
         }
     }
 }
