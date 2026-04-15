@@ -38,9 +38,9 @@ namespace PhysX
         private static readonly ReportErrorDelegate _reportError = ReportError;
         private static readonly CustomFilterShaderDelegate _customFilterShader = CustomFilterShader;
         private static readonly ContactDelegate _contact = Contact;
-        private static readonly PreFilterDelegate _blockingPreFilter = BlockingPreFilter;
+        //private static readonly PreFilterDelegate _blockingPreFilter = BlockingPreFilter;
         private static readonly PreFilterDelegate _nonBlockingPreFilter = NonBlockingPreFilter;
-        private static readonly IntPtr _blockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPreFilter);
+        //private static readonly IntPtr _blockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPreFilter);
         private static readonly IntPtr _nonBlockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_nonBlockingPreFilter);
 
         public int layerCount = 32;
@@ -74,7 +74,7 @@ namespace PhysX
         private PxSceneDesc* _sceneDesc;
         private IntPtr _sceneDescPtr;
         private PxSimulationEventCallback* _simulationEventCallback;
-        private PxQueryFilterCallback* _blockingQueryFilterCallback;
+        //private PxQueryFilterCallback* _blockingQueryFilterCallback;
         private PxQueryFilterCallback* _nonBlockingQueryFilterCallback;
 
         private byte* _scratchBuffer;
@@ -170,9 +170,9 @@ namespace PhysX
 
             PxScene_setSimulationEventCallback_mut(_scene, _simulationEventCallback);
 
-            _blockingQueryFilterCallback = create_raycast_filter_callback_func(
-                (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_blockingPreFilterPtr,
-                null);
+            //_blockingQueryFilterCallback = create_raycast_filter_callback_func(
+            //    (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_blockingPreFilterPtr,
+            //    null);
 
             _nonBlockingQueryFilterCallback = create_raycast_filter_callback_func(
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_nonBlockingPreFilterPtr,
@@ -285,11 +285,11 @@ namespace PhysX
                 PxSimulationEventCallback_delete(_simulationEventCallback);
                 _simulationEventCallback = null;
             }
-            if (_blockingQueryFilterCallback != null)
-            {
-                PxQueryFilterCallback_delete(_blockingQueryFilterCallback);
-                _blockingQueryFilterCallback = null;
-            }
+            //if (_blockingQueryFilterCallback != null)
+            //{
+            //    PxQueryFilterCallback_delete(_blockingQueryFilterCallback);
+            //    _blockingQueryFilterCallback = null;
+            //}
             if (_nonBlockingQueryFilterCallback != null)
             {
                 PxQueryFilterCallback_delete(_nonBlockingQueryFilterCallback);
@@ -505,7 +505,7 @@ namespace PhysX
             }
             filterData.data.word0 = (uint)mask;
             PxRaycastHit pxRaycastHit = default;
-            var result = PxSceneQueryExt_raycastSingle(_scene, (PxVec3*)&origin, (PxVec3*)&direction, distance, outputFlags, &pxRaycastHit, &filterData, _blockingQueryFilterCallback, null);
+            var result = PxSceneQueryExt_raycastSingle(_scene, (PxVec3*)&origin, (PxVec3*)&direction, distance, outputFlags, &pxRaycastHit, &filterData, _nonBlockingQueryFilterCallback, null);
             raycastHit.distance = pxRaycastHit.distance;
             raycastHit.position = pxRaycastHit.position;
             raycastHit.collider = GetCollider((PxActor*)pxRaycastHit.actor, pxRaycastHit.shape);
@@ -575,7 +575,7 @@ namespace PhysX
             var filterData = PxQueryFilterData_new();
             filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
             filterData.data.word0 = (uint)mask;
-            var result = PxSceneQueryExt_overlapAny(_scene, geometry, &pose, &pxOverlapHit, &filterData, _blockingQueryFilterCallback);
+            var result = PxSceneQueryExt_overlapAny(_scene, geometry, &pose, &pxOverlapHit, &filterData, _nonBlockingQueryFilterCallback);
             overlapHit.collider = GetCollider((PxActor*)pxOverlapHit.actor, pxOverlapHit.shape);
             overlapHit.faceIndex = (int)pxOverlapHit.faceIndex;
             return result;
@@ -638,7 +638,7 @@ namespace PhysX
             }
             filterData.data.word0 = (uint)mask;
             PxSweepHit pxSweepHit = default;
-            var result = PxSceneQueryExt_sweepSingle(_scene, geometry, &pose, (PxVec3*)&direction, distance, outputFlags, &pxSweepHit, &filterData, _blockingQueryFilterCallback, null, inflation);
+            var result = PxSceneQueryExt_sweepSingle(_scene, geometry, &pose, (PxVec3*)&direction, distance, outputFlags, &pxSweepHit, &filterData, _nonBlockingQueryFilterCallback, null, inflation);
             sweepHit = default;
             sweepHit.collider = GetCollider((PxActor*)pxSweepHit.actor, pxSweepHit.shape);
             sweepHit.distance = pxSweepHit.distance;
@@ -838,11 +838,11 @@ namespace PhysX
             return (queryFilterData->word0 & shapeFilterData.word0) != 0 ? PxQueryHitType.Block : PxQueryHitType.None;
         }
 
-        [MonoPInvokeCallback(typeof(PreFilterDelegate))]
-        private static PxQueryHitType BlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
-        {
-            return FilterByLayer(queryFilterData, shape);
-        }
+        //[MonoPInvokeCallback(typeof(PreFilterDelegate))]
+        //private static PxQueryHitType BlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
+        //{
+        //    return FilterByLayer(queryFilterData, shape);
+        //}
 
         [MonoPInvokeCallback(typeof(PreFilterDelegate))]
         private static PxQueryHitType NonBlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
