@@ -859,11 +859,6 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(PreFilterDelegate))]
         private static PxQueryHitType NonBlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
         {
-            if (userData != null && rigidActor == (PxRigidActor*)userData)
-            {
-                return PxQueryHitType.None;
-            }
-
             var result = FilterByLayer(queryFilterData, shape);
             return result == PxQueryHitType.Block ? PxQueryHitType.Touch : result;
         }
