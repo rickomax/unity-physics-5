@@ -80,7 +80,6 @@ Several methods emulate Unity’s Physics API, with some differences:
 
 Differences from Unity:
 
-- Additional `assumeNoInitialOverlap` parameter
 - Uses a custom `RaycastHit` struct (not `UnityEngine.RaycastHit`)
 
 ---
