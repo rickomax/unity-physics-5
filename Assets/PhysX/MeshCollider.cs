@@ -19,9 +19,8 @@ namespace PhysX
                 {
                     return;
                 }
-
                 _convex = value;
-                _shapeDirty = true;
+                RebuildShape();
             }
         }
 
@@ -34,9 +33,8 @@ namespace PhysX
                 {
                     return;
                 }
-
                 _sharedMesh = value;
-                _shapeDirty = true;
+                RebuildShape();
             }
         }
 
@@ -46,27 +44,10 @@ namespace PhysX
         protected override void Awake()
         {
             base.Awake();
-            CreateActor();
-            if (sharedMesh != null)
+            if (_sharedMesh != null)
             {
                 RebuildShape();
             }
-        }
-
-        protected override void Update()
-        {
-            base.Update();
-            if (_shapeDirty || _transform.hasChanged)
-            {
-                RebuildShape();
-                _shapeDirty = false;
-                _transform.hasChanged = false;
-            }
-        }
-
-        public override void SetShapeDirty()
-        {
-            _shapeDirty = true;
         }
 
         public override void Release()
@@ -75,90 +56,63 @@ namespace PhysX
             {
                 return;
             }
-
-            ReleaseShape();
+            triangleMesh = null;
+            convexMesh = null;
             base.Release();
         }
 
-        private bool TriangleMeshAllowedForCurrentActor() => actorIsStatic || actorIsKinematic;
-
-        private void ReleaseShape()
+        public override void RebuildShape()
         {
-            if (_shape != null)
-            {
-                DetachShape(_shape);
-                PxShape_release_mut(_shape);
-                _shape = null;
-            }
-
+            DestroyShape();
             triangleMesh = null;
             convexMesh = null;
-        }
-
-        private void RebuildShape()
-        {
-            if (sharedMesh == null || !sharedMesh.isReadable)
+            if (_sharedMesh == null)
             {
-                ReleaseShape();
                 return;
             }
-
-            if (actor == null)
+            if (!_sharedMesh.isReadable)
             {
-                CreateActor();
-                if (actor == null)
-                {
-                    return;
-                }
+                Debug.LogWarning($"MeshCollider on '{name}': mesh is not readable.");
+                return;
             }
-
-            ReleaseShape();
-
             var scale = GetPhysicsScale();
-
-            if (!convex)
+            if (!_convex)
             {
-                if (!TriangleMeshAllowedForCurrentActor())
+                if (!isPhysicsStatic && !isKinematic)
                 {
-                    Debug.LogWarning("Triangular concave meshes can't be assigned to dynamic rigidbodies");
+                    Debug.LogWarning("Triangular concave meshes can't be assigned to dynamic rigidbodies.");
                     return;
                 }
-
-                PhysicsManager.instance.BakeMesh(sharedMesh, convex: false);
-                triangleMesh = PhysicsManager.instance.GetTriangleMesh(sharedMesh);
+                PhysicsManager.instance.BakeMesh(_sharedMesh, convex: false);
+                triangleMesh = PhysicsManager.instance.GetTriangleMesh(_sharedMesh);
                 if (triangleMesh == null)
                 {
-                    throw new Exception("Could not retrieve baked PhysX triangle mesh");
+                    throw new Exception("Could not retrieve baked PhysX triangle mesh.");
                 }
-
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxTriangleMeshGeometry_new(triangleMesh, &meshScale, 0);
                 if (!PxTriangleMeshGeometry_isValid(&geometry))
                 {
-                    throw new Exception("Could not generate PhysX triangle mesh geometry");
+                    throw new Exception("Could not generate PhysX triangle mesh geometry.");
                 }
-
                 CreateShape((PxGeometry*)&geometry);
             }
             else
             {
-                PhysicsManager.instance.BakeMesh(sharedMesh, convex: true);
-                convexMesh = PhysicsManager.instance.GetConvexMesh(sharedMesh);
+                PhysicsManager.instance.BakeMesh(_sharedMesh, convex: true);
+                convexMesh = PhysicsManager.instance.GetConvexMesh(_sharedMesh);
                 if (convexMesh == null)
                 {
-                    throw new Exception("Could not retrieve baked PhysX convex mesh");
+                    throw new Exception("Could not retrieve baked PhysX convex mesh.");
                 }
-
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxConvexMeshGeometry_new(convexMesh, &meshScale, 0);
                 if (!PxConvexMeshGeometry_isValid(&geometry))
                 {
-                    throw new Exception("Could not generate PhysX convex mesh geometry");
+                    throw new Exception("Could not generate PhysX convex mesh geometry.");
                 }
-
                 CreateShape((PxGeometry*)&geometry);
             }
-
             if (_shape != null)
             {
                 AttachShape(_shape);

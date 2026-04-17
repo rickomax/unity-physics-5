@@ -17,41 +17,22 @@ namespace PhysX
                 {
                     return;
                 }
-
                 _radius = value;
-                _shapeDirty = true;
+                RebuildShape();
             }
         }
 
         protected override void Awake()
         {
             base.Awake();
-            CreateActor();
             RebuildShape();
         }
 
-        protected override void Update()
+        public override void RebuildShape()
         {
-            base.Update();
-            if (_shapeDirty || _transform.hasChanged)
-            {
-                RebuildShape();
-                _shapeDirty = false;
-                _transform.hasChanged = false;
-            }
-        }
-
-        private void RebuildShape()
-        {
-            if (_shape != null)
-            {
-                DetachShape(_shape);
-                PxShape_release_mut(_shape);
-                _shape = null;
-            }
-
+            DestroyShape();
             var scale = GetPhysicsScale();
-            var scaledRadius = Mathf.Max(scale.x, Mathf.Max(scale.y, scale.z)) * radius;
+            var scaledRadius = Mathf.Max(scale.x, Mathf.Max(scale.y, scale.z)) * _radius;
             var geometry = PxSphereGeometry_new(scaledRadius);
             if (PxSphereGeometry_isValid(&geometry))
             {

@@ -17,41 +17,21 @@ namespace PhysX
                 {
                     return;
                 }
-
                 _halfExtents = value;
-                _shapeDirty = true;
+                RebuildShape();
             }
         }
 
         protected override void Awake()
         {
             base.Awake();
-            CreateActor();
             RebuildShape();
         }
 
-        protected override void Update()
+        public override void RebuildShape()
         {
-            base.Update();
-            if (_shapeDirty || _transform.hasChanged)
-            {
-                RebuildShape();
-                _shapeDirty = false;
-                _transform.hasChanged = false;
-            }
-        }
-
-        private void RebuildShape()
-        {
-            if (_shape != null)
-            {
-                DetachShape(_shape);
-                PxShape_release_mut(_shape);
-                _shape = null;
-            }
-
-            var scale = GetPhysicsScale();
-            var scaledHalfExtents = Vector3.Scale(halfExtents, scale);
+            DestroyShape();
+            var scaledHalfExtents = Vector3.Scale(_halfExtents, GetPhysicsScale());
             var geometry = PxBoxGeometry_new_1(scaledHalfExtents);
             if (PxBoxGeometry_isValid(&geometry))
             {

@@ -7,6 +7,7 @@ using static MagicPhysX.NativeMethods;
 
 namespace PhysX
 {
+    [DefaultExecutionOrder(-7)]
     public unsafe class BoxCharacterController : Collider
     {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -72,7 +73,6 @@ namespace PhysX
         private float _lastMoveTime;
         private bool _firstMove = true;
         private Vector3 _computedVelocity;
-        private Vector3 _lastScale;
         private int _lastLayer;
         private int _cachedCollisionMask;
 
@@ -86,6 +86,7 @@ namespace PhysX
                 {
                     return null;
                 }
+
                 return (PxRigidActor*)PxController_getActor(_controller);
             }
         }
@@ -93,31 +94,19 @@ namespace PhysX
         public float halfForwardExtent
         {
             get => _halfForwardExtent;
-            set
-            {
-                _halfForwardExtent = value;
-                ApplyScaledExtentsToController();
-            }
+            set { _halfForwardExtent = value; ApplyScaledExtentsToController(); }
         }
 
         public float halfHeight
         {
             get => _halfHeight;
-            set
-            {
-                _halfHeight = value;
-                ApplyScaledExtentsToController();
-            }
+            set { _halfHeight = value; ApplyScaledExtentsToController(); }
         }
 
         public float halfSideExtent
         {
             get => _halfSideExtent;
-            set
-            {
-                _halfSideExtent = value;
-                ApplyScaledExtentsToController();
-            }
+            set { _halfSideExtent = value; ApplyScaledExtentsToController(); }
         }
 
         public float contactOffset
@@ -175,6 +164,7 @@ namespace PhysX
                 {
                     return default;
                 }
+
                 var foot = PxController_getFootPosition(_controller);
                 return new Vector3((float)foot.x, (float)foot.y, (float)foot.z);
             }
@@ -182,21 +172,23 @@ namespace PhysX
             {
                 if (_controller == null)
                 {
-                    throw new NullReferenceException();
+                    return;
                 }
+
                 var foot = PxExtendedVec3_new_1(value.x, value.y, value.z);
                 PxController_setFootPosition_mut(_controller, &foot);
             }
         }
 
-        public Vector3 position
+        public override Vector3 position
         {
             get
             {
                 if (_controller == null)
                 {
-                    return transform.position;
+                    return default;
                 }
+
                 var pos = PxController_getPosition(_controller);
                 return new Vector3((float)pos->x, (float)pos->y, (float)pos->z);
             }
@@ -204,14 +196,17 @@ namespace PhysX
             {
                 if (_controller == null)
                 {
-                    throw new NullReferenceException();
+                    return;
                 }
+
                 var pos = PxExtendedVec3_new_1(value.x, value.y, value.z);
                 PxController_setPosition_mut(_controller, &pos);
+                transform.position = position;
+                
             }
         }
 
-        public Quaternion rotation
+        public override Quaternion rotation
         {
             get => transform.rotation;
             set => transform.rotation = value;
@@ -222,9 +217,7 @@ namespace PhysX
         protected override void Awake()
         {
             base.Awake();
-
             var pxPosition = (PxVec3)transform.position;
-
             _controllerDesc = PxBoxControllerDesc_new_alloc();
             PxBoxControllerDesc_setToDefault_mut(_controllerDesc);
             _controllerDesc->position.x = pxPosition.x;
@@ -241,13 +234,16 @@ namespace PhysX
             _controllerDesc->volumeGrowth = _volumeGrowth;
             _controllerDesc->nonWalkableMode = _nonWalkableMode;
             _controllerDesc->material = _material;
-            ApplyScaledExtentsToControllerDesc();
+
+            var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
+            _controllerDesc->halfSideExtent = scaledHalfExtents.x;
+            _controllerDesc->halfHeight = scaledHalfExtents.y;
+            _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
 
             var callbackInfo = new ControllerCallbackInfo();
             callbackInfo.controllerObstacleHitCallback = (delegate* unmanaged[Cdecl]<PxControllerObstacleHit*, void>)Marshal.GetFunctionPointerForDelegate(_onObstacleHit);
             callbackInfo.controllerShapeHitCallback = (delegate* unmanaged[Cdecl]<PxControllerShapeHit*, void>)Marshal.GetFunctionPointerForDelegate(_onShapeHit);
             callbackInfo.controllersHitCallback = (delegate* unmanaged[Cdecl]<PxControllersHit*, void>)Marshal.GetFunctionPointerForDelegate(_onControllerHit);
-
             _callbackInfoPtr = Marshal.AllocHGlobal(sizeof(ControllerCallbackInfo));
             *(ControllerCallbackInfo*)_callbackInfoPtr = callbackInfo;
             _controllerDesc->reportCallback = create_user_controller_hit_report((ControllerCallbackInfo*)_callbackInfoPtr);
@@ -256,7 +252,6 @@ namespace PhysX
             behaviorCallbackInfo.getBehaviorFlagsShape = (delegate* unmanaged[Cdecl]<PxController*, PxShape*, PxActor*, PxControllerBehaviorFlags>)Marshal.GetFunctionPointerForDelegate(_getBehaviorFlagsShape);
             behaviorCallbackInfo.getBehaviorFlagsController = (delegate* unmanaged[Cdecl]<PxController*, PxController*, PxControllerBehaviorFlags>)Marshal.GetFunctionPointerForDelegate(_getBehaviorFlagsController);
             behaviorCallbackInfo.getBehaviorFlagsObstacle = (delegate* unmanaged[Cdecl]<PxController*, PxObstacle*, PxControllerBehaviorFlags>)Marshal.GetFunctionPointerForDelegate(_getBehaviorFlagsObstacle);
-
             _behaviorCallbackInfoPtr = Marshal.AllocHGlobal(sizeof(ControllerBehaviorCallbackInfo));
             *(ControllerBehaviorCallbackInfo*)_behaviorCallbackInfoPtr = behaviorCallbackInfo;
             _controllerDesc->behaviorCallback = create_controller_behavior_callback((ControllerBehaviorCallbackInfo*)_behaviorCallbackInfoPtr);
@@ -268,9 +263,8 @@ namespace PhysX
                 if (_controller != null)
                 {
                     _shape = &shapes[0];
-                    PxShape_setFlag_mut(_shape, PxShapeFlag.SceneQueryShape, true);
+                    //PxShape_setFlag_mut(_shape, PxShapeFlag.SceneQueryShape, true);
                     SetupFilterData(_shape);
-                    _lastScale = GetPhysicsScale();
                     RebuildFilterCallbacks();
                     PhysicsManager.instance.RegisterShape(_shape, this);
                     PhysicsManager.instance.RegisterCharacterController(this);
@@ -285,27 +279,31 @@ namespace PhysX
             {
                 return;
             }
-            var scale = GetPhysicsScale();
-            if (scale != _lastScale)
-            {
-                ApplyScaledExtentsToController();
-                _lastScale = scale;
-            }
             if (gameObject.layer != _lastLayer)
             {
                 RebuildFilterCallbacks();
             }
         }
 
+        private void LateUpdate()
+        {
+            if (_controller == null)
+            {
+                return;
+            }
+
+            transform.position = position;
+            
+        }
+
         public PxControllerCollisionFlags Move(Vector3 displacement)
         {
             if (_controller == null)
             {
-                throw new NullReferenceException();
+                return default;
             }
             var elapsedTime = _firstMove ? Time.fixedDeltaTime : Time.time - _lastMoveTime;
             elapsedTime = Mathf.Max(elapsedTime, Time.fixedDeltaTime);
-            _firstMove = false;
             var positionBefore = position;
             var filterData = PxFilterData_new_2((uint)_cachedCollisionMask, 0, 0, 0);
             var filters = PxControllerFilters_new(&filterData, _queryFilterCallback, _controllerFilterCallback);
@@ -313,8 +311,10 @@ namespace PhysX
             var flags = PxController_move_mut(_controller, (PxVec3*)&displacement, _minDist, elapsedTime, &filters, null);
             isGrounded = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
             _computedVelocity = (position - positionBefore) / elapsedTime;
-            _lastMoveTime = Time.time;
             transform.position = position;
+            
+            _lastMoveTime = Time.time;
+            _firstMove = false;
             return flags;
         }
 
@@ -326,36 +326,20 @@ namespace PhysX
             }
         }
 
-        public void SyncTransformFromPhysics()
-        {
-            transform.position = position;
-        }
-
-        public void SetPositionAndRotation(Vector3 position, Quaternion rotation)
-        {
-            this.position = position;
-            transform.position = position;
-            transform.rotation = rotation;
-        }
-
         public override void Release()
         {
             if (_released)
             {
                 return;
             }
-
-            _released = true;
-
             if (_controller != null)
             {
                 PhysicsManager.instance.UnregisterCharacterController(this);
                 var controllerActor = (PxRigidActor*)PxController_getActor(_controller);
-                if (controllerActor != null && PhysicsManager.instance != null)
+                if (controllerActor != null)
                 {
                     PhysicsManager.instance.RemoveCollider((PxActor*)controllerActor);
                 }
-
                 if (_shape != null)
                 {
                     PhysicsManager.instance.UnregisterShape(_shape);
@@ -363,7 +347,6 @@ namespace PhysX
                     _controller = null;
                 }
             }
-
             if (_controllerDesc != null)
             {
                 if (_controllerDesc->reportCallback != null)
@@ -377,87 +360,63 @@ namespace PhysX
                 PxBoxControllerDesc_delete(_controllerDesc);
                 _controllerDesc = null;
             }
-
             if (_callbackInfoPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(_callbackInfoPtr);
                 _callbackInfoPtr = IntPtr.Zero;
             }
-
             if (_behaviorCallbackInfoPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(_behaviorCallbackInfoPtr);
                 _behaviorCallbackInfoPtr = IntPtr.Zero;
             }
-
             if (_queryFilterCallback != null)
             {
                 PxQueryFilterCallback_delete(_queryFilterCallback);
                 _queryFilterCallback = null;
             }
-
             if (_controllerFilterCallback != null)
             {
                 destroy_controller_filter_callback(_controllerFilterCallback);
                 _controllerFilterCallback = null;
             }
-
-            if (_material != null)
-            {
-                //todo: release material?
-                _material = null;
-            }
-        }
-
-        private Vector3 GetScaledHalfExtents()
-        {
-            return Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
-        }
-
-        private void ApplyScaledExtentsToControllerDesc()
-        {
-            if (_controllerDesc == null)
-            {
-                return;
-            }
-            var scaledHalfExtents = GetScaledHalfExtents();
-            _controllerDesc->halfSideExtent = scaledHalfExtents.x;
-            _controllerDesc->halfHeight = scaledHalfExtents.y;
-            _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
+            _material = null;
         }
 
         private void ApplyScaledExtentsToController()
         {
-            ApplyScaledExtentsToControllerDesc();
-            if (_controller == null)
+            if (_controllerDesc != null)
             {
-                return;
+                var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
+                _controllerDesc->halfSideExtent = scaledHalfExtents.x;
+                _controllerDesc->halfHeight = scaledHalfExtents.y;
+                _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
             }
-            var scaledHalfExtents = GetScaledHalfExtents();
-            PxBoxController_setHalfSideExtent_mut((PxBoxController*)_controller, scaledHalfExtents.x);
-            PxBoxController_setHalfHeight_mut((PxBoxController*)_controller, scaledHalfExtents.y);
-            PxBoxController_setHalfForwardExtent_mut((PxBoxController*)_controller, scaledHalfExtents.z);
+
+            if (_controller != null)
+            {
+                var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
+                PxBoxController_setHalfSideExtent_mut((PxBoxController*)_controller, scaledHalfExtents.x);
+                PxBoxController_setHalfHeight_mut((PxBoxController*)_controller, scaledHalfExtents.y);
+                PxBoxController_setHalfForwardExtent_mut((PxBoxController*)_controller, scaledHalfExtents.z);
+            }
         }
 
-        private void RebuildFilterCallbacks()
+        public void RebuildFilterCallbacks()
         {
             _lastLayer = gameObject.layer;
             _cachedCollisionMask = PhysicsManager.instance.GetCollisionMask(gameObject.layer);
-
             if (_queryFilterCallback != null)
             {
                 PxQueryFilterCallback_delete(_queryFilterCallback);
             }
-
             _queryFilterCallback = create_raycast_filter_callback_func(
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_cctQueryPreFilterPtr,
                 (void*)(IntPtr)_cachedCollisionMask);
-
             if (_controllerFilterCallback != null)
             {
                 destroy_controller_filter_callback(_controllerFilterCallback);
             }
-
             _controllerFilterCallback = create_controller_filter_callback(
                 (delegate* unmanaged[Cdecl]<PxController*, PxController*, void*, bool>)_cctControllerFilterPtr,
                 (void*)(IntPtr)_cachedCollisionMask);
@@ -480,6 +439,7 @@ namespace PhysX
             {
                 return true;
             }
+
             var shapes = stackalloc PxShape[1];
             PxRigidActor_getShapes(actorB, &shapes, 1, 0);
             var shapeFilterData = PxShape_getQueryFilterData(&shapes[0]);
@@ -503,25 +463,30 @@ namespace PhysX
             {
                 return;
             }
+
             var hitCollider = PhysicsManager.instance.GetCollider((PxActor*)hitActor, hit->shape);
             if (hitCollider == null)
             {
                 return;
             }
+
             if (hit->controller == null)
             {
                 return;
             }
+
             var controllerActor = PxController_getActor(hit->controller);
             if (controllerActor == null)
             {
                 return;
             }
+
             var controllerCollider = PhysicsManager.instance.GetCollider((PxActor*)controllerActor);
             if (controllerCollider == null)
             {
                 return;
             }
+
             _cachedControllerShapeHit.collider = hitCollider;
             _cachedControllerShapeHit.dir = hit->dir;
             _cachedControllerShapeHit.length = hit->length;
@@ -533,25 +498,16 @@ namespace PhysX
             controllerCollider.gameObject.SendMessage("OnControllerColliderHit", _cachedControllerShapeHit, SendMessageOptions.DontRequireReceiver);
         }
 
-        //todo: expose this as a Func for customization
         [MonoPInvokeCallback(typeof(GetBehaviorFlagsShapeDelegate))]
         private static PxControllerBehaviorFlags GetBehaviorFlagsShape(PxController* sourceController, PxShape* shape, PxActor* actor)
-        {
-            return PxControllerBehaviorFlags.CctCanRideOnObject;
-        }
+            => PxControllerBehaviorFlags.CctCanRideOnObject;
 
-        //todo: expose this as a Func for customization
         [MonoPInvokeCallback(typeof(GetBehaviorFlagsControllerDelegate))]
         private static PxControllerBehaviorFlags GetBehaviorFlagsController(PxController* sourceController, PxController* otherController)
-        {
-            return PxControllerBehaviorFlags.CctSlide;
-        }
+            => PxControllerBehaviorFlags.CctSlide;
 
-        //todo: expose this as a Func for customization
         [MonoPInvokeCallback(typeof(GetBehaviorFlagsObstacleDelegate))]
         private static PxControllerBehaviorFlags GetBehaviorFlagsObstacle(PxController* sourceController, PxObstacle* obstacle)
-        {
-            return PxControllerBehaviorFlags.CctCanRideOnObject;
-        }
+            => PxControllerBehaviorFlags.CctCanRideOnObject;
     }
 }

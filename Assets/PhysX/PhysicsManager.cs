@@ -14,7 +14,7 @@ using static MagicPhysX.NativeMethods;
 
 namespace PhysX
 {
-    [DefaultExecutionOrder(-1000000000)]
+    [DefaultExecutionOrder(-10)]
     public unsafe class PhysicsManager : MonoBehaviour
     {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -32,7 +32,6 @@ namespace PhysX
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void ReportErrorDelegate(PxErrorCode code, sbyte* message, sbyte* file, uint line, void* userData);
 
-        private const int MaxHits = 2048;
         private const float InitialOverlapEpsilon = 1e-4f;
         private const uint PhysXVersionMajor = 5u;
         private const uint PhysXVersionMinor = 1u;
@@ -49,21 +48,23 @@ namespace PhysX
         private static readonly IntPtr _nonBlockingPreFilterPtr = Marshal.GetFunctionPointerForDelegate(_nonBlockingPreFilter);
         private static readonly IntPtr _blockingPostFilterPtr = Marshal.GetFunctionPointerForDelegate(_blockingPostFilter);
 
+        public uint scratchBlockSize = 16 * 1024;
+        public int maxHits = 2048;
         public int layerCount = 32;
         public float toleranceLength = 1f;
         public float toleranceSpeed = 10f;
         public string pvdAddress = "127.0.0.1";
         public int pvdPort = 5425;
         public bool connectToPVD;
-        public PxPhysics* physics;
-        public PxTolerancesScale tolerancesScale;
 
         private readonly Dictionary<IntPtr, Collider> _colliders = new Dictionary<IntPtr, Collider>();
         private readonly Dictionary<Mesh, IntPtr> _triangleMeshes = new Dictionary<Mesh, IntPtr>();
         private readonly Dictionary<Mesh, IntPtr> _convexMeshes = new Dictionary<Mesh, IntPtr>();
         private readonly Dictionary<IntPtr, Collider> _shapeColliders = new Dictionary<IntPtr, Collider>();
-        private readonly List<BoxCharacterController> _characterControllers = new List<BoxCharacterController>();
+        private readonly HashSet<BoxCharacterController> _characterControllers = new HashSet<BoxCharacterController>();
         private Rigidbody _dummyRigidbody;
+        private PxTolerancesScale _toleranceScale;
+        private PxPhysics* _physics;
 
         [SerializeField]
         private float _updateInterval = 0f;
@@ -82,31 +83,40 @@ namespace PhysX
         private PxSimulationEventCallback* _simulationEventCallback;
         private PxQueryFilterCallback* _blockingQueryFilterCallback;
         private PxQueryFilterCallback* _nonBlockingQueryFilterCallback;
-
         private byte* _scratchBuffer;
-
-        public uint scratchBlockSize = 16 * 1024;
 
         public static PhysicsManager instance { get; private set; }
         public static bool isShuttingDown { get; private set; }
         public Rigidbody dummyRigidbody => _dummyRigidbody;
         public float updateInterval => _updateInterval == 0f ? Time.fixedDeltaTime : _updateInterval;
+        public PxPhysics* physics => _physics;
 
         private void Awake()
         {
-            isShuttingDown = false;
-            Physics.simulationMode = SimulationMode.Script;
-            BuildLayerCollisionDictionary();
+            instance = this;
+            InitialSetup();
+            CreatePhysics();
+            CreateScene();
+            CreateCallbacks();
+            CreateDummyRigidbody();
+            //todo: this is crashing
+            if (connectToPVD)
+            {
+                if (_scene == null)
+                {
+                    return;
+                }
+                var pvdClient = PxScene_getScenePvdClient_mut(_scene);
+                if (pvdClient != null)
+                {
+                    PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitScenequeries, true);
+                }
+            }
+            StartCoroutine(UpdatePhysics());
+        }
 
-            _scratchBuffer = (byte*)UnsafeUtility.Malloc(scratchBlockSize, 16, Allocator.Persistent);
-
-            tolerancesScale = PxTolerancesScale_new(toleranceLength, toleranceSpeed);
-            _foundation = physx_create_foundation();
-            _errorCallback = create_error_callback(
-                (delegate* unmanaged[Cdecl]<PxErrorCode, sbyte*, sbyte*, uint, void*, void>)Marshal.GetFunctionPointerForDelegate(_reportError),
-                null);
-            PxFoundation_registerErrorCallback_mut(_foundation, _errorCallback);
-
+        private void CreatePhysics()
+        {
             if (connectToPVD)
             {
                 var uriBytes = Encoding.ASCII.GetBytes(pvdAddress + "\0");
@@ -120,28 +130,42 @@ namespace PhysX
                     _pvd = phys_PxCreatePvd(_foundation);
                     PxPvd_connect_mut(_pvd, transport, PxPvdInstrumentationFlags.All);
                 }
-
-                physics = phys_PxCreatePhysics(PhysXVersionNumber, _foundation, (PxTolerancesScale*)Unsafe.AsPointer(ref tolerancesScale), true, _pvd, null);
-                if (physics == null)
+                _physics = phys_PxCreatePhysics(PhysXVersionNumber, _foundation, (PxTolerancesScale*)Unsafe.AsPointer(ref _toleranceScale), true, _pvd, null);
+                if (_physics == null)
                 {
                     throw new Exception("Unable to create PhysX system");
                 }
-
-                phys_PxInitExtensions(physics, _pvd);
+                phys_PxInitExtensions(_physics, _pvd);
             }
             else
             {
-                physics = physx_create_physics(_foundation);
+                _physics = physx_create_physics(_foundation);
             }
-
-            if (physics == null)
+            if (_physics == null)
             {
                 throw new Exception("Unable to create PhysX system");
             }
+        }
 
+        private void InitialSetup()
+        {
+            isShuttingDown = false;
+            Physics.simulationMode = SimulationMode.Script;
+            BuildLayerCollisionDictionary();
+            _scratchBuffer = (byte*)UnsafeUtility.Malloc(scratchBlockSize, 16, Allocator.Persistent);
+            _toleranceScale = PxTolerancesScale_new(toleranceLength, toleranceSpeed);
+            _foundation = physx_create_foundation();
+            _errorCallback = create_error_callback(
+                (delegate* unmanaged[Cdecl]<PxErrorCode, sbyte*, sbyte*, uint, void*, void>)Marshal.GetFunctionPointerForDelegate(_reportError),
+                null);
+            PxFoundation_registerErrorCallback_mut(_foundation, _errorCallback);
+        }
+
+        private void CreateScene()
+        {
             _sceneDescPtr = Marshal.AllocHGlobal(Marshal.SizeOf<PxSceneDesc>());
             _sceneDesc = (PxSceneDesc*)_sceneDescPtr;
-            PxSceneDesc_setToDefault_mut(_sceneDesc, (PxTolerancesScale*)Unsafe.AsPointer(ref tolerancesScale));
+            PxSceneDesc_setToDefault_mut(_sceneDesc, (PxTolerancesScale*)Unsafe.AsPointer(ref _toleranceScale));
             _sceneDesc->gravity = Physics.gravity;
             _dispatcher = phys_PxDefaultCpuDispatcherCreate(1, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
             _sceneDesc->cpuDispatcher = (PxCpuDispatcher*)_dispatcher;
@@ -152,19 +176,20 @@ namespace PhysX
             enable_custom_filter_shader(
                 _sceneDesc,
                 (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(_customFilterShader),
-                1u);
-
+            0u);
             if (!PxSceneDesc_isValid(_sceneDesc))
             {
                 throw new Exception("Invalid PhysX scene description");
             }
-
-            _scene = PxPhysics_createScene_mut(physics, _sceneDesc);
+            _scene = PxPhysics_createScene_mut(_physics, _sceneDesc);
             if (_scene == null)
             {
                 throw new Exception("Could not create PhysX scene");
             }
+        }
 
+        private void CreateCallbacks()
+        {
             var simulationEventCallbackInfo = new SimulationEventCallbackInfo();
             simulationEventCallbackInfo.collision_callback =
                 (delegate* unmanaged[Cdecl]<void*, PxContactPairHeader*, PxContactPair*, uint, void>)Marshal.GetFunctionPointerForDelegate(_contact);
@@ -173,32 +198,18 @@ namespace PhysX
             {
                 throw new Exception("Error creating PhysX collision callback");
             }
-
             PxScene_setSimulationEventCallback_mut(_scene, _simulationEventCallback);
-
             _blockingQueryFilterCallback = create_pre_and_post_raycast_filter_callback_func(
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_blockingPreFilterPtr,
                 (delegate* unmanaged[Cdecl]<PxFilterData*, PxQueryHit*, void*, PxQueryHitType>)_blockingPostFilterPtr,
                 null);
-
             _nonBlockingQueryFilterCallback = create_raycast_filter_callback_func(
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_nonBlockingPreFilterPtr,
                 null);
-
             _controllerManager = phys_PxCreateControllerManager(_scene, false);
-            PxControllerManager_setPreciseSweeps_mut(_controllerManager, false);
-            instance = this;
-            EnsureDummyRigidbody();
-
-            //todo: this is crashing
-            //if (connectToPVD)
-            //{
-            //    Invoke("StartPVDExtensions", 3f);
-            //}
-            StartCoroutine(UpdatePhysics());
         }
 
-        private void EnsureDummyRigidbody()
+        private void CreateDummyRigidbody()
         {
             _dummyRigidbody = GetComponent<Rigidbody>();
             if (_dummyRigidbody == null)
@@ -208,22 +219,10 @@ namespace PhysX
             _dummyRigidbody.InitializeAsDummyStatic();
         }
 
-        private void StartPVDExtensions()
-        {
-            if (_scene == null)
-            {
-                return;
-            }
-
-            var pvdClient = PxScene_getScenePvdClient_mut(_scene);
-            if (pvdClient != null)
-            {
-                PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitScenequeries, true);
-            }
-        }
 
         private IEnumerator UpdatePhysics()
         {
+            _nextUpdateTime = Time.time + updateInterval;
             while (true)
             {
                 if (Time.time < _nextUpdateTime)
@@ -252,8 +251,8 @@ namespace PhysX
 
         public void OnDestroy()
         {
+            instance = null;
             isShuttingDown = true;
-
             if (_colliders.Count > 0)
             {
                 var collidersToRelease = new HashSet<Collider>(_colliders.Values);
@@ -262,25 +261,20 @@ namespace PhysX
                     collider?.Release();
                 }
             }
-
-            instance = null;
             _dummyRigidbody = null;
             _colliders.Clear();
             _shapeColliders.Clear();
             _characterControllers.Clear();
-
             foreach (var entry in _triangleMeshes)
             {
                 PxTriangleMesh_release_mut((PxTriangleMesh*)entry.Value);
             }
             _triangleMeshes.Clear();
-
             foreach (var entry in _convexMeshes)
             {
                 PxConvexMesh_release_mut((PxConvexMesh*)entry.Value);
             }
             _convexMeshes.Clear();
-
             if (_controllerManager != null)
             {
                 PxControllerManager_release_mut(_controllerManager);
@@ -315,10 +309,10 @@ namespace PhysX
             {
                 phys_PxCloseExtensions();
             }
-            if (physics != null)
+            if (_physics != null)
             {
-                PxPhysics_release_mut(physics);
-                physics = null;
+                PxPhysics_release_mut(_physics);
+                _physics = null;
             }
             if (connectToPVD && _pvd != null)
             {
@@ -371,7 +365,6 @@ namespace PhysX
             {
                 return;
             }
-
             _shapeColliders[(IntPtr)pxShape] = collider;
         }
 
@@ -381,7 +374,6 @@ namespace PhysX
             {
                 return;
             }
-
             _shapeColliders.Remove((IntPtr)pxShape);
         }
 
@@ -405,13 +397,12 @@ namespace PhysX
             {
                 return collider;
             }
-
             return GetCollider(pxActor);
         }
 
         public void RegisterCharacterController(BoxCharacterController controller)
         {
-            if (controller != null && !_characterControllers.Contains(controller))
+            if (controller != null)
             {
                 _characterControllers.Add(controller);
             }
@@ -425,27 +416,8 @@ namespace PhysX
             }
         }
 
-        public void InvalidateAllControllerCaches()
-        {
-            for (var i = _characterControllers.Count - 1; i >= 0; i--)
-            {
-                var controller = _characterControllers[i];
-                if (controller == null)
-                {
-                    _characterControllers.RemoveAt(i);
-                    continue;
-                }
-
-                controller.InvalidateCache();
-            }
-        }
-
         public PxController* CreateController(PxControllerDesc* controllerDesc, Collider collider, PxShape** shapes)
         {
-            if (_controllerManager == null)
-            {
-                throw new NullReferenceException();
-            }
             if (!PxControllerDesc_isValid(controllerDesc))
             {
                 return null;
@@ -471,7 +443,6 @@ namespace PhysX
             {
                 throw new NullReferenceException();
             }
-
             direction = default;
             depth = default;
             var geometryA = PxShape_getGeometry(shapeA);
@@ -543,8 +514,8 @@ namespace PhysX
             }
             filterData.data.word0 = (uint)mask;
             var blockingHit = false;
-            var hitCapacity = Math.Min(raycastHits.Length, MaxHits);
-            var pxRaycastHits = stackalloc PxRaycastHit[MaxHits];
+            var hitCapacity = Math.Min(raycastHits.Length, maxHits);
+            var pxRaycastHits = stackalloc PxRaycastHit[maxHits];
             var result = PxSceneQueryExt_raycastMultiple(_scene, (PxVec3*)&origin, (PxVec3*)&direction, distance, outputFlags, pxRaycastHits, (uint)hitCapacity, &blockingHit, &filterData, _nonBlockingQueryFilterCallback, null);
             outBlockingHit = blockingHit;
             for (var i = 0; i < result; i++)
@@ -592,18 +563,16 @@ namespace PhysX
             {
                 throw new ArgumentNullException(nameof(overlapHits));
             }
-
-            if (overlapHits.Length > MaxHits)
+            if (overlapHits.Length > maxHits)
             {
                 throw new IndexOutOfRangeException("Please increase the MaxHits constant");
             }
-
             var geometry = PxShape_getGeometry(collider.shape);
             var pose = collider.GetQueryPose(position, rotation);
             var filterData = PxQueryFilterData_new();
             filterData.flags |= PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
             filterData.data.word0 = (uint)mask;
-            var pxOverlapHits = stackalloc PxOverlapHit[MaxHits];
+            var pxOverlapHits = stackalloc PxOverlapHit[maxHits];
             var result = PxSceneQueryExt_overlapMultiple(_scene, geometry, &pose, pxOverlapHits, (uint)overlapHits.Length, &filterData, _nonBlockingQueryFilterCallback);
             for (var i = 0; i < result; i++)
             {
@@ -676,8 +645,8 @@ namespace PhysX
             }
             filterData.data.word0 = (uint)mask;
             var blockingHit = false;
-            var hitCapacity = Math.Min(sweepHits.Length, MaxHits);
-            var pxSweepHits = stackalloc PxSweepHit[MaxHits];
+            var hitCapacity = Math.Min(sweepHits.Length, maxHits);
+            var pxSweepHits = stackalloc PxSweepHit[maxHits];
             var result = PxSceneQueryExt_sweepMultiple(_scene, geometry, &pose, (PxVec3*)&direction, distance, outputFlags, pxSweepHits, (uint)hitCapacity, &blockingHit, &filterData, _nonBlockingQueryFilterCallback, null, inflation);
             outBlockingHit = blockingHit;
             for (var i = 0; i < result; i++)
@@ -748,7 +717,7 @@ namespace PhysX
                         desc.flags = 0;
                     }
 
-                    var cookingParams = PxCookingParams_new((PxTolerancesScale*)Unsafe.AsPointer(ref tolerancesScale));
+                    var cookingParams = PxCookingParams_new((PxTolerancesScale*)Unsafe.AsPointer(ref _toleranceScale));
                     var cookResult = PxTriangleMeshCookingResult.Failure;
                     var triMesh = phys_PxCreateTriangleMesh(&cookingParams, &desc, phys_PxGetStandaloneInsertionCallback(), &cookResult);
 
@@ -774,7 +743,7 @@ namespace PhysX
                     desc.points.data = (byte*)vertexData.GetUnsafeReadOnlyPtr() + positionOffset;
                     desc.flags = PxConvexFlags.ComputeConvex;
 
-                    var cookingParams = PxCookingParams_new((PxTolerancesScale*)Unsafe.AsPointer(ref tolerancesScale));
+                    var cookingParams = PxCookingParams_new((PxTolerancesScale*)Unsafe.AsPointer(ref _toleranceScale));
                     cookingParams.meshPreprocessParams = PxMeshPreprocessingFlags.WeldVertices;
                     cookingParams.convexMeshCookingType = PxConvexMeshCookingType.Quickhull;
                     var cookResult = PxConvexMeshCookingResult.Failure;
@@ -813,7 +782,6 @@ namespace PhysX
         {
             _ignoredLayerCollisions = new HashSet<CollisionKey>();
             _collisionMasks = new int[layerCount];
-
             for (var layer1 = 0; layer1 < layerCount; layer1++)
             {
                 for (var layer2 = 0; layer2 < layerCount; layer2++)
@@ -832,21 +800,17 @@ namespace PhysX
 
         private static string PtrToStringASCII(sbyte* ptr) => Marshal.PtrToStringAnsi((IntPtr)ptr);
 
-        private static PxQueryHitType FilterByLayer(PxFilterData* queryFilterData, PxShape* shape)
+        private static bool FilterByLayer(PxFilterData* queryFilterData, PxShape* shape)
         {
             var shapeFilterData = PxShape_getQueryFilterData(shape);
-            return (queryFilterData->word0 & shapeFilterData.word0) != 0 ? PxQueryHitType.Block : PxQueryHitType.None;
+            return (queryFilterData->word0 & shapeFilterData.word0) != 0;
         }
 
         [MonoPInvokeCallback(typeof(PreFilterDelegate))]
         private static PxQueryHitType BlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
         {
-            if (userData != null && rigidActor == (PxRigidActor*)userData)
-            {
-                return PxQueryHitType.None;
-            }
-
-            return FilterByLayer(queryFilterData, shape);
+            var result = FilterByLayer(queryFilterData, shape);
+            return result ?  PxQueryHitType.Block : PxQueryHitType.None;
         }
 
         [MonoPInvokeCallback(typeof(PostFilterDelegate))]
@@ -860,7 +824,7 @@ namespace PhysX
         private static PxQueryHitType NonBlockingPreFilter(PxRigidActor* rigidActor, PxFilterData* queryFilterData, PxShape* shape, uint hitFlags, void* userData)
         {
             var result = FilterByLayer(queryFilterData, shape);
-            return result == PxQueryHitType.Block ? PxQueryHitType.Touch : result;
+            return result ? PxQueryHitType.Touch : PxQueryHitType.None;
         }
 
         [MonoPInvokeCallback(typeof(ContactDelegate))]
@@ -881,9 +845,11 @@ namespace PhysX
             {
                 return 32;
             }
-
             var count = 0;
-            while ((value & 1u) == 0u) { value >>= 1; count++; }
+            while ((value & 1u) == 0u) { 
+                value >>= 1;
+                count++; 
+            }
             return count;
         }
 

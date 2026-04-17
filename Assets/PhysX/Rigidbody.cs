@@ -1,123 +1,112 @@
 using MagicPhysX;
-using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
 namespace PhysX
 {
+    [DefaultExecutionOrder(-9)]
     [DisallowMultipleComponent]
     public unsafe class Rigidbody : MonoBehaviour
     {
-        [SerializeField] private bool _kinematic;
-        [SerializeField] private bool _useGravity = true;
-        [SerializeField] private bool _physicsStatic;
-
         private readonly List<Collider> _colliders = new List<Collider>();
-        private bool _released;
-
         private Vector3 _kinematicTargetPosition;
         private Quaternion _kinematicTargetRotation;
+        private bool _isReleased;
+        private bool _isPhysicsStatic;
 
-        public PxRigidDynamic* rigidDynamic { get; private set; }
-        public PxRigidStatic* rigidStatic { get; private set; }
+        public bool hasDynamicActor => rigidDynamic != null;
+        public bool hasStaticActor => rigidStatic != null;
+        public bool isReleased => _isReleased;
 
-        public PxRigidActor* actor => physicsStatic ? (PxRigidActor*)rigidStatic : (PxRigidActor*)rigidDynamic;
-
-        public Vector3 physicsPosition => rigidDynamic != null && isKinematic ? _kinematicTargetPosition : position;
-        public Quaternion physicsRotation => rigidDynamic != null && isKinematic ? _kinematicTargetRotation : rotation;
-
-        public bool physicsStatic
+        public bool isPhysicsStatic
         {
-            get => _physicsStatic;
+            get
+            {
+                return _isPhysicsStatic;
+            }
             set
             {
-                if (_physicsStatic == value)
+                if (_isPhysicsStatic == value)
                 {
                     return;
                 }
-
-                _physicsStatic = value;
-                if (actor != null || rigidDynamic != null || rigidStatic != null)
-                {
-                    RecreateActor();
-                }
-
-                NotifyCollidersShapeDirty();
+                _isPhysicsStatic = value;
+                RebuildActor();
             }
         }
 
+        public PxRigidDynamic* rigidDynamic { get; private set; }
+        public PxRigidStatic* rigidStatic { get; private set; }
+        public PxRigidActor* actor => hasDynamicActor ? (PxRigidActor*)rigidDynamic : (PxRigidActor*)rigidStatic;
+
         public bool isKinematic
         {
-            get => !physicsStatic && _kinematic;
+            get
+            {
+                if (!hasDynamicActor)
+                {
+                    return false;
+                }
+                var flags = PxRigidBody_getRigidBodyFlags((PxRigidBody*)rigidDynamic);
+                return ((int)flags & (int)PxRigidBodyFlag.Kinematic) != 0;
+            }
             set
             {
-                if (_kinematic == value)
+                if (!hasDynamicActor)
                 {
                     return;
                 }
-
-                _kinematic = value;
-                if (physicsStatic || rigidDynamic == null)
-                {
-                    return;
-                }
-
                 PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.Kinematic, value);
                 PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.UseKinematicTargetForSceneQueries, value);
-                NotifyCollidersShapeDirty();
             }
         }
 
         public Vector3 position
         {
-            get
-            {
-                if (actor == null)
-                {
-                    return transform.position;
-                }
-
-                return PxRigidActor_getGlobalPose(actor).p;
-            }
+            get => isKinematic ? _kinematicTargetPosition : actor == null ? default : (Vector3)PxRigidActor_getGlobalPose(actor).p;
             set
             {
                 if (actor == null)
                 {
-                    transform.position = value;
-                    transform.hasChanged = false;
                     return;
                 }
+                var pxTransform = PxRigidActor_getGlobalPose(actor);
+                pxTransform.p = (PxVec3)value;
+                if (isKinematic)
+                {
+                    PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
+                    transform.position = value;
 
-                var pose = PxRigidActor_getGlobalPose(actor);
-                SetPositionAndRotation(value, pose.q);
+                }
+                else
+                {
+                    PxRigidActor_setGlobalPose_mut(actor, &pxTransform, true);
+                }
             }
         }
 
         public Quaternion rotation
         {
-            get
-            {
-                if (actor == null)
-                {
-                    return transform.rotation;
-                }
-
-                return PxRigidActor_getGlobalPose(actor).q;
-            }
+            get => isKinematic ? _kinematicTargetRotation : actor == null ? default : (Quaternion)PxRigidActor_getGlobalPose(actor).q;
             set
             {
                 if (actor == null)
                 {
-                    transform.rotation = value;
-                    transform.hasChanged = false;
                     return;
                 }
+                var pxTransform = PxRigidActor_getGlobalPose(actor);
+                pxTransform.q = (PxQuat)value;
+                if (isKinematic)
+                {
+                    PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
+                    transform.rotation = value;
 
-                var pose = PxRigidActor_getGlobalPose(actor);
-                SetPositionAndRotation(pose.p, value);
+                }
+                else
+                {
+                    PxRigidActor_setGlobalPose_mut(actor, &pxTransform, true);
+                }
             }
         }
 
@@ -125,62 +114,95 @@ namespace PhysX
         {
             get
             {
-                if (rigidDynamic == null)
+                if (!hasDynamicActor)
                 {
-                    return _useGravity;
+                    return default;
                 }
-
-                var flags = PxActor_getActorFlags((PxActor*)rigidDynamic);
-                return ((int)flags & (int)PxActorFlag.DisableGravity) == 0;
+                return ((int)PxActor_getActorFlags((PxActor*)rigidDynamic) & (int)PxActorFlag.DisableGravity) == 0;
             }
             set
             {
-                _useGravity = value;
-                if (rigidDynamic == null)
+                if (!hasDynamicActor)
                 {
                     return;
                 }
-
                 PxActor_setActorFlag_mut((PxActor*)rigidDynamic, PxActorFlag.DisableGravity, !value);
             }
         }
 
         public Vector3 velocity
         {
-            get
-            {
-                if (rigidDynamic == null)
-                {
-                    return default;
-                }
-
-                return PxRigidDynamic_getLinearVelocity(rigidDynamic);
-            }
+            get => hasDynamicActor ? (Vector3)PxRigidDynamic_getLinearVelocity(rigidDynamic) : default;
             set
             {
-                if (rigidDynamic == null)
+                if (!hasDynamicActor)
                 {
-                    throw new NullReferenceException();
+                    return;
                 }
-
-                var linearVelocity = (PxVec3)value;
-                PxRigidDynamic_setLinearVelocity_mut(rigidDynamic, &linearVelocity, false);
+                var v = (PxVec3)value;
+                PxRigidDynamic_setLinearVelocity_mut(rigidDynamic, &v, false);
             }
+        }
+
+        public void InitializeAsDummyStatic()
+        {
+            _isPhysicsStatic = true;
+            isKinematic = false;
+            useGravity = false;
         }
 
         private void Awake()
         {
             _kinematicTargetPosition = transform.position;
             _kinematicTargetRotation = transform.rotation;
-            EnsureActorCreated();
+            CreateActor();
         }
 
-        internal void InitializeAsDummyStatic()
+        private void CreateActor()
         {
-            _physicsStatic = true;
-            _kinematic = false;
-            _useGravity = false;
-            EnsureActorCreated();
+            var pxPosition = (PxVec3)transform.position;
+            var pxRotation = (PxQuat)transform.rotation;
+            var pxTransform = PxTransform_new_5(&pxPosition, &pxRotation);
+            if (_isPhysicsStatic)
+            {
+                rigidStatic = PxPhysics_createRigidStatic_mut(PhysicsManager.instance.physics, &pxTransform);
+                if (rigidStatic != null)
+                {
+                    PhysicsManager.instance.AddActor((PxActor*)rigidStatic, null);
+                }
+            }
+            else
+            {
+                rigidDynamic = PxPhysics_createRigidDynamic_mut(PhysicsManager.instance.physics, &pxTransform);
+                if (rigidDynamic != null)
+                {
+                    PhysicsManager.instance.AddActor((PxActor*)rigidDynamic, null);
+                }
+            }
+        }
+
+        private void RebuildActor()
+        {
+            if (!Application.isPlaying)
+            {
+                return;
+            }
+            for (var i = 0; i < _colliders.Count; i++)
+            {
+                _colliders[i]?.DetachExistingShape();
+            }
+            if (actor != null)
+            {
+                PhysicsManager.instance.RemoveCollider((PxActor*)actor);
+                PxRigidActor_release_mut(actor);
+            }
+            rigidDynamic = null;
+            rigidStatic = null;
+            CreateActor();
+            for (var i = 0; i < _colliders.Count; i++)
+            {
+                _colliders[i]?.AttachExistingShape();
+            }
         }
 
         private void OnDestroy()
@@ -189,7 +211,6 @@ namespace PhysX
             {
                 return;
             }
-
             Release();
         }
 
@@ -199,143 +220,37 @@ namespace PhysX
             {
                 return;
             }
+            var pose = PxRigidActor_getGlobalPose((PxRigidActor*)rigidDynamic);
+            transform.SetPositionAndRotation(pose.p, pose.q);
 
-            SyncTransformFromPhysics();
-        }
-
-        private void Update()
-        {
-            if (actor != null && transform.hasChanged)
+            if (isKinematic)
             {
-                transform.hasChanged = false;
-                SyncPhysicsFromTransform();
+                _kinematicTargetPosition = transform.position;
+                _kinematicTargetRotation = transform.rotation;
             }
         }
 
-        public void EnsureActorCreated()
-        {
-            if (_released || actor != null)
-            {
-                return;
-            }
-
-            RefreshPhysicsTransform();
-            var pxTransform = (PxTransform*)Unsafe.AsPointer(ref _physicsTransform);
-            if (physicsStatic)
-            {
-                rigidStatic = PxPhysics_createRigidStatic_mut(PhysicsManager.instance.physics, pxTransform);
-                if (rigidStatic != null)
-                {
-                    PhysicsManager.instance.AddActor((PxActor*)rigidStatic, null);
-                }
-            }
-            else
-            {
-                rigidDynamic = PxPhysics_createRigidDynamic_mut(PhysicsManager.instance.physics, pxTransform);
-                if (rigidDynamic != null)
-                {
-                    useGravity = _useGravity;
-                    isKinematic = _kinematic;
-                    PhysicsManager.instance.AddActor((PxActor*)rigidDynamic, null);
-                }
-            }
-
-            for (var i = 0; i < _colliders.Count; i++)
-            {
-                _colliders[i]?.AttachExistingShape();
-            }
-
-            var allColliders = GetComponentsInChildren<Collider>(true);
-            foreach (var col in allColliders)
-            {
-                if (col.usesDummyRigidbody)
-                {
-                    col.ResolveAttachedRigidbody();
-                }
-            }
-        }
-
-        internal void RegisterCollider(Collider collider)
+        public void RegisterCollider(Collider collider)
         {
             if (collider == null || _colliders.Contains(collider))
             {
                 return;
             }
-
             _colliders.Add(collider);
-            if (actor != null)
-            {
-                collider.AttachExistingShape();
-            }
         }
 
-        internal void UnregisterCollider(Collider collider)
+        public void UnregisterCollider(Collider collider)
         {
-            if (collider == null)
-            {
-                return;
-            }
-
             _colliders.Remove(collider);
-            collider.DetachExistingShape();
-        }
-
-        public void SetPositionAndRotation(Vector3 position, Quaternion rotation)
-        {
-            EnsureActorCreated();
-            if (actor == null)
-            {
-                throw new NullReferenceException();
-            }
-
-            _kinematicTargetPosition = position;
-            _kinematicTargetRotation = rotation;
-
-            var pxPosition = (PxVec3)position;
-            var pxRotation = (PxQuat)rotation;
-            var pxTransform = PxTransform_new_5(&pxPosition, &pxRotation);
-            if (rigidDynamic != null && isKinematic)
-            {
-                PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
-            }
-            else
-            {
-                PxRigidActor_setGlobalPose_mut(actor, &pxTransform, true);
-            }
-
-            transform.position = position;
-            transform.rotation = rotation;
-            transform.hasChanged = false;
-        }
-
-        public void SyncTransformFromPhysics()
-        {
-            if (actor == null)
-            {
-                return;
-            }
-
-            var pose = PxRigidActor_getGlobalPose(actor);
-            transform.position = pose.p;
-            transform.rotation = pose.q;
-            if (rigidDynamic != null && isKinematic)
-            {
-                _kinematicTargetPosition = transform.position;
-                _kinematicTargetRotation = transform.rotation;
-            }
-
-            transform.hasChanged = false;
         }
 
         public void Release()
         {
-            if (_released)
+            if (_isReleased)
             {
                 return;
             }
-
-            _released = true;
-
+            _isReleased = true;
             for (var i = _colliders.Count - 1; i >= 0; i--)
             {
                 var collider = _colliders[i];
@@ -343,104 +258,17 @@ namespace PhysX
                 {
                     continue;
                 }
-
                 collider.DetachExistingShape();
                 collider.NotifyAttachedRigidbodyReleased(this);
             }
-
             _colliders.Clear();
-
             if (actor != null)
             {
                 PhysicsManager.instance.RemoveCollider((PxActor*)actor);
                 PxRigidActor_release_mut(actor);
             }
-
             rigidDynamic = null;
             rigidStatic = null;
-        }
-
-        private PxTransform _physicsTransform;
-
-        private void RefreshPhysicsTransform()
-        {
-            var pos = (PxVec3)transform.position;
-            var rot = (PxQuat)transform.rotation;
-            _physicsTransform = PxTransform_new_5(&pos, &rot);
-        }
-
-        private void RecreateActor()
-        {
-            for (var i = 0; i < _colliders.Count; i++)
-            {
-                _colliders[i]?.DetachExistingShape();
-            }
-
-            if (actor != null)
-            {
-                PhysicsManager.instance.RemoveCollider((PxActor*)actor);
-                PxRigidActor_release_mut(actor);
-            }
-
-            rigidDynamic = null;
-            rigidStatic = null;
-
-            RefreshPhysicsTransform();
-            var pxTransform = (PxTransform*)Unsafe.AsPointer(ref _physicsTransform);
-            if (physicsStatic)
-            {
-                rigidStatic = PxPhysics_createRigidStatic_mut(PhysicsManager.instance.physics, pxTransform);
-                if (rigidStatic != null)
-                {
-                    PhysicsManager.instance.AddActor((PxActor*)rigidStatic, null);
-                }
-            }
-            else
-            {
-                rigidDynamic = PxPhysics_createRigidDynamic_mut(PhysicsManager.instance.physics, pxTransform);
-                if (rigidDynamic != null)
-                {
-                    useGravity = _useGravity;
-                    isKinematic = _kinematic;
-                    PhysicsManager.instance.AddActor((PxActor*)rigidDynamic, null);
-                }
-            }
-
-            for (var i = 0; i < _colliders.Count; i++)
-            {
-                _colliders[i]?.AttachExistingShape();
-            }
-        }
-
-        private void SyncPhysicsFromTransform()
-        {
-            if (actor == null)
-            {
-                return;
-            }
-
-            _kinematicTargetPosition = transform.position;
-            _kinematicTargetRotation = transform.rotation;
-
-            var pos = (PxVec3)transform.position;
-            var rot = (PxQuat)transform.rotation;
-            var pose = PxTransform_new_5(&pos, &rot);
-            if (rigidDynamic != null && isKinematic)
-            {
-                PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pose);
-            }
-            else
-            {
-                PxRigidActor_setGlobalPose_mut(actor, &pose, true);
-            }
-        }
-
-        private void NotifyCollidersShapeDirty()
-        {
-            for (var i = 0; i < _colliders.Count; i++)
-            {
-                _colliders[i]?.SetShapeDirty();
-            }
         }
     }
 }
