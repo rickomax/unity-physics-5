@@ -835,7 +835,7 @@ namespace PhysX
                 {
                     continue;
                 }
-                var message = pair.status == PxPairFlag.NotifyTouchFound ? "OnTriggerEnter" : pair.status == PxPairFlag.NotifyTouchLost ? "OnTriggerExit" : null;
+                var message = pair.status == PxPairFlag.NotifyTouchFound ? "OnPhysXTriggerEnter" : pair.status == PxPairFlag.NotifyTouchLost ? "OnPhysXTriggerExit" : null;
                 if (message == null)
                 {
                     continue;

@@ -532,7 +532,7 @@ namespace PhysX
             _cachedControllerShapeHit.worldPos.x = (float)hit->worldPos.x;
             _cachedControllerShapeHit.worldPos.y = (float)hit->worldPos.y;
             _cachedControllerShapeHit.worldPos.z = (float)hit->worldPos.z;
-            controllerCollider.gameObject.SendMessage("OnControllerColliderHit", _cachedControllerShapeHit, SendMessageOptions.DontRequireReceiver);
+            controllerCollider.gameObject.SendMessage("OnPhysXControllerColliderHit", _cachedControllerShapeHit, SendMessageOptions.DontRequireReceiver);
         }
 
         [MonoPInvokeCallback(typeof(GetBehaviorFlagsShapeDelegate))]
