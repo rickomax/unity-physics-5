@@ -848,10 +848,14 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CustomFilterShaderDelegate))]
         private static PxFilterFlags CustomFilterShader(FilterShaderCallbackInfo* callbackInfo)
         {
-            PxPairFlags flags = 0;
+            PxPairFlags flags;
             if (phys_PxFilterObjectIsTrigger(callbackInfo->attributes0) || phys_PxFilterObjectIsTrigger(callbackInfo->attributes1))
             {
                 flags = PxPairFlags.TriggerDefault;
+            }
+            else
+            {
+                flags = PxPairFlags.ContactDefault;
             }
             var layer0 = TrailingZeroCount(callbackInfo->filterData0.word0);
             var layer1 = TrailingZeroCount(callbackInfo->filterData1.word0);
