@@ -30,13 +30,19 @@ namespace PhysX
 
         public override void RebuildShape()
         {
+            var oldShape = shape;
             DestroyShape();
             var scaledHalfExtents = Vector3.Scale(_halfExtents, GetPhysicsScale());
             var geometry = PxBoxGeometry_new_1(scaledHalfExtents);
             if (PxBoxGeometry_isValid(&geometry))
             {
                 CreateShape((PxGeometry*)&geometry);
-                AttachShape(_shape);
+                if (oldShape != null)
+                {
+                    var flags = PxShape_getFlags(oldShape);
+                    PxShape_setFlags_mut(shape, flags);
+                }
+                AttachShape(shape);
             }
         }
     }

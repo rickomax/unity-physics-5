@@ -100,18 +100,19 @@ namespace PhysX
             CreateCallbacks();
             CreateDummyRigidbody();
             //todo: this is crashing
-            if (connectToPVD)
-            {
-                if (_scene == null)
-                {
-                    return;
-                }
-                var pvdClient = PxScene_getScenePvdClient_mut(_scene);
-                if (pvdClient != null)
-                {
-                    PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitScenequeries, true);
-                }
-            }
+            //if (connectToPVD)
+            //{
+            //    if (_scene == null)
+            //    {
+            //        return;
+            //    }
+            //    var pvdClient = PxScene_getScenePvdClient_mut(_scene);
+            //    if (pvdClient != null)
+            //    {
+            //        PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitContacts, true);
+            //        PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitScenequeries, true);
+            //    }
+            //}
             StartCoroutine(UpdatePhysics());
         }
 
@@ -207,6 +208,9 @@ namespace PhysX
                 (delegate* unmanaged[Cdecl]<PxRigidActor*, PxFilterData*, PxShape*, uint, void*, PxQueryHitType>)_nonBlockingPreFilterPtr,
                 null);
             _controllerManager = phys_PxCreateControllerManager(_scene, false);
+            //PxControllerManager_setPreciseSweeps_mut(_controllerManager, true);
+            PxControllerManager_setOverlapRecoveryModule_mut(_controllerManager, true);
+            //PxControllerManager_setTessellation_mut(_controllerManager, true, 32f);
         }
 
         private void CreateDummyRigidbody()
@@ -422,17 +426,17 @@ namespace PhysX
             {
                 return null;
             }
-            var ctrl = PxControllerManager_createController_mut(_controllerManager, controllerDesc);
-            if (ctrl == null)
+            var controller = PxControllerManager_createController_mut(_controllerManager, controllerDesc);
+            if (controller == null)
             {
                 return null;
             }
-            var controllerActor = (PxRigidActor*)PxController_getActor(ctrl);
+            var controllerActor = (PxRigidActor*)PxController_getActor(controller);
             var id = _nextId++;
             controllerActor->userData = (void*)id;
             _colliders.Add((IntPtr)id, collider);
             PxRigidActor_getShapes(controllerActor, shapes, 1, 0);
-            return ctrl;
+            return controller;
         }
 
         public bool ComputePenetration(out Vector3 direction, out float depth, Collider colliderA, Collider colliderB, Vector3 positionA, Quaternion rotationA, Vector3 positionB, Quaternion rotationB)

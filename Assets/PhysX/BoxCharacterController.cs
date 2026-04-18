@@ -2,6 +2,7 @@ using AOT;
 using MagicPhysX;
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
@@ -214,6 +215,22 @@ namespace PhysX
 
         public Vector3 velocity => _computedVelocity;
 
+        public override string physicsName
+        {
+            set
+            {
+                if (actor == null || shape == null)
+                {
+                    return;
+                }
+                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
+                {
+                    PxActor_setName_mut((PxActor*)actor, bytes);
+                    PxShape_setName_mut(shape, bytes);
+                }
+            }
+        }
+
         protected override void Awake()
         {
             base.Awake();
@@ -272,6 +289,23 @@ namespace PhysX
             }
         }
 
+        protected override void OnEnable()
+        {
+            base.OnEnable();
+            if (actor != null)
+            {
+                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, false);
+            }
+        }
+
+        protected override void OnDisable()
+        {
+            base.OnDisable();
+            if (actor != null)
+            {
+                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, true);
+            }
+        }
         protected override void Update()
         {
             base.Update();
@@ -312,7 +346,6 @@ namespace PhysX
             isGrounded = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
             _computedVelocity = (position - positionBefore) / elapsedTime;
             transform.position = position;
-            
             _lastMoveTime = Time.time;
             _firstMove = false;
             return flags;
@@ -335,7 +368,7 @@ namespace PhysX
             if (_controller != null)
             {
                 PhysicsManager.instance.UnregisterCharacterController(this);
-                var controllerActor = (PxRigidActor*)PxController_getActor(_controller);
+                var controllerActor = actor;
                 if (controllerActor != null)
                 {
                     PhysicsManager.instance.RemoveCollider((PxActor*)controllerActor);

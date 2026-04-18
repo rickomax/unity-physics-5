@@ -1,5 +1,8 @@
+using Codice.Client.BaseCommands;
 using MagicPhysX;
 using System.Collections.Generic;
+using System.Text;
+using Unity.VectorGraphics;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
@@ -143,6 +146,20 @@ namespace PhysX
                 PxRigidDynamic_setLinearVelocity_mut(rigidDynamic, &v, false);
             }
         }
+        public string physicsName
+        {
+            set
+            {
+                if (actor == null)
+                {
+                    return;
+                }
+                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
+                {
+                    PxActor_setName_mut((PxActor*)actor, bytes);
+                }
+            }
+        }
 
         public void InitializeAsDummyStatic()
         {
@@ -202,6 +219,22 @@ namespace PhysX
             for (var i = 0; i < _colliders.Count; i++)
             {
                 _colliders[i]?.AttachExistingShape();
+            }
+        }
+
+        private void OnEnable()
+        {
+            if (actor != null)
+            {
+                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, false);
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (actor != null)
+            {
+                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, true);
             }
         }
 

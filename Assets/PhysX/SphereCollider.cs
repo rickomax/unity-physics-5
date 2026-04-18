@@ -30,6 +30,7 @@ namespace PhysX
 
         public override void RebuildShape()
         {
+            var oldShape = shape;
             DestroyShape();
             var scale = GetPhysicsScale();
             var scaledRadius = Mathf.Max(scale.x, Mathf.Max(scale.y, scale.z)) * _radius;
@@ -37,7 +38,12 @@ namespace PhysX
             if (PxSphereGeometry_isValid(&geometry))
             {
                 CreateShape((PxGeometry*)&geometry);
-                AttachShape(_shape);
+                if (oldShape != null)
+                {
+                    var flags = PxShape_getFlags(oldShape);
+                    PxShape_setFlags_mut(shape, flags);
+                }
+                AttachShape(shape);
             }
         }
     }

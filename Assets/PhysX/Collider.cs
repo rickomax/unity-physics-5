@@ -1,5 +1,6 @@
 using MagicPhysX;
 using System.Runtime.CompilerServices;
+using System.Text;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 
@@ -47,10 +48,8 @@ namespace PhysX
                 {
                     return;
                 }
-
+                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !value);
                 PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, value);
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !value && isActiveAndEnabled);
-                PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, isActiveAndEnabled);
             }
         }
 
@@ -60,9 +59,9 @@ namespace PhysX
             set
             {
                 _offset.p = (PxVec3)value;
-                if (_shape != null)
+                if (shape != null)
                 {
-                    PxShape_setLocalPose_mut(_shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
+                    PxShape_setLocalPose_mut(shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
                 }
             }
         }
@@ -73,9 +72,9 @@ namespace PhysX
             set
             {
                 _offset.q = (PxQuat)value;
-                if (_shape != null)
+                if (shape != null)
                 {
-                    PxShape_setLocalPose_mut(_shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
+                    PxShape_setLocalPose_mut(shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
                 }
             }
         }
@@ -126,13 +125,13 @@ namespace PhysX
             }
         }
 
+        private Rigidbody _attachedRigidbody;
+        private int _lastLayer;
+
+        protected PxTransform _offset = new PxTransform() { p = Vector3.zero, q = Quaternion.identity };
         protected PxMaterial* _material;
-        protected PxTransform _offset;
         protected PxShape* _shape;
         protected bool _released;
-        protected Rigidbody _attachedRigidbody;
-
-        private int _lastLayer;
 
         protected virtual bool supportsAttachedRigidbody => true;
         public virtual PxRigidActor* actor => _attachedRigidbody == null ? null : _attachedRigidbody.actor;
@@ -141,6 +140,20 @@ namespace PhysX
         protected bool isKinematic => _attachedRigidbody?.isKinematic ?? false;
         protected bool isPhysicsStatic => _attachedRigidbody?.isPhysicsStatic ?? false;
 
+        public virtual string physicsName
+        {
+            set
+            {
+                if (shape == null)
+                {
+                    return;
+                }
+                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
+                {
+                    PxShape_setName_mut(shape, bytes);
+                }
+            }
+        }
 
         protected virtual void Awake()
         {
@@ -170,9 +183,9 @@ namespace PhysX
             var pxPos = (PxVec3)localPos;
             var pxRot = (PxQuat)localRot;
             _offset = PxTransform_new_5(&pxPos, &pxRot);
-            if (_shape != null)
+            if (shape != null)
             {
-                PxShape_setLocalPose_mut(_shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
+                PxShape_setLocalPose_mut(shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
             }
         }
 
@@ -186,29 +199,29 @@ namespace PhysX
             Release();
         }
 
-        private void OnEnable()
+        protected virtual void OnEnable()
         {
-            if (_shape != null)
+            if (shape != null)
             {
-                PxShape_setFlag_mut(_shape, PxShapeFlag.SimulationShape, !isTrigger);
-                PxShape_setFlag_mut(_shape, PxShapeFlag.SceneQueryShape, true);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !isTrigger);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, true);
             }
         }
 
-        private void OnDisable()
+        protected virtual void OnDisable()
         {
-            if (_shape != null)
+            if (shape != null)
             {
-                PxShape_setFlag_mut(_shape, PxShapeFlag.SimulationShape, false);
-                PxShape_setFlag_mut(_shape, PxShapeFlag.SceneQueryShape, false);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, false);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, false);
             }
         }
 
         protected virtual void Update()
         {
-            if (_shape != null && gameObject.layer != _lastLayer)
+            if (shape != null && gameObject.layer != _lastLayer)
             {
-                SetupFilterData(_shape);
+                SetupFilterData(shape);
                 _lastLayer = gameObject.layer;
             }
         }
@@ -254,17 +267,17 @@ namespace PhysX
 
         public void AttachExistingShape()
         {
-            if (_shape != null)
+            if (shape != null)
             {
-                AttachShape(_shape);
+                AttachShape(shape);
             }
         }
 
         public void DetachExistingShape()
         {
-            if (_shape != null)
+            if (shape != null)
             {
-                DetachShape(_shape);
+                DetachShape(shape);
             }
         }
 
@@ -295,12 +308,12 @@ namespace PhysX
 
         protected void CreateShape(PxGeometry* geometry)
         {
-            PxShapeFlags flags = PxShapeFlags.SimulationShape | PxShapeFlags.SceneQueryShape;
-            _shape = PxPhysics_createShape_mut(PhysicsManager.instance.physics, geometry, _material, true, flags);
-            if (_shape != null)
+            //PxShapeFlags flags = PxShapeFlags.SimulationShape | PxShapeFlags.SceneQueryShape;
+            _shape = PxPhysics_createShape_mut(PhysicsManager.instance.physics, geometry, _material, true, (PxShapeFlags)0);
+            if (shape != null)
             {
-                PxShape_setLocalPose_mut(_shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
-                SetupFilterData(_shape);
+                PxShape_setLocalPose_mut(shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
+                SetupFilterData(shape);
             }
             else
             {
@@ -310,12 +323,12 @@ namespace PhysX
 
         protected void DestroyShape()
         {
-            if (_shape == null)
+            if (shape == null)
             {
                 return;
             }
-            DetachShape(_shape);
-            PxShape_release_mut(_shape);
+            DetachShape(shape);
+            PxShape_release_mut(shape);
             _shape = null;
         }
 
