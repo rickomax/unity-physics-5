@@ -203,7 +203,7 @@ namespace PhysX
                 var pos = PxExtendedVec3_new_1(value.x, value.y, value.z);
                 PxController_setPosition_mut(_controller, &pos);
                 transform.position = position;
-                
+
             }
         }
 
@@ -280,7 +280,6 @@ namespace PhysX
                 if (_controller != null)
                 {
                     _shape = &shapes[0];
-                    //PxShape_setFlag_mut(_shape, PxShapeFlag.SceneQueryShape, true);
                     SetupFilterData(_shape);
                     RebuildFilterCallbacks();
                     PhysicsManager.instance.RegisterShape(_shape, this);
@@ -327,7 +326,6 @@ namespace PhysX
             }
 
             transform.position = position;
-            
         }
 
         public PxControllerCollisionFlags Move(Vector3 displacement)
@@ -425,7 +423,6 @@ namespace PhysX
                 _controllerDesc->halfHeight = scaledHalfExtents.y;
                 _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
             }
-
             if (_controller != null)
             {
                 var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
@@ -458,24 +455,36 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CctQueryPreFilterDelegate))]
         private static PxQueryHitType CctQueryPreFilter(PxRigidActor* rigidActor, PxFilterData* filterData, PxShape* shape, uint hitFlags, void* userData)
         {
-            var collisionMask = (uint)(IntPtr)userData;
+            var collisionMask = (uint)userData;
             var shapeFilterData = PxShape_getQueryFilterData(shape);
-            return (shapeFilterData.word0 & collisionMask) != 0 ? PxQueryHitType.Block : PxQueryHitType.None;
+            if ((shapeFilterData.word0 & collisionMask) == 0)
+            {
+                return PxQueryHitType.None;
+            }
+            var shapeFlags = PxShape_getFlags(shape);
+            var isTrigger = ((int)shapeFlags & (int)PxShapeFlag.TriggerShape) != 0;
+            return isTrigger ? PxQueryHitType.Touch : PxQueryHitType.Block;
         }
 
         [MonoPInvokeCallback(typeof(CctControllerFilterDelegate))]
         private static bool CctControllerFilter(PxController* controllerA, PxController* controllerB, void* userData)
         {
-            var collisionMask = (uint)(IntPtr)userData;
-            var actorB = (PxRigidActor*)PxController_getActor(controllerB);
-            if (actorB == null)
+            var actorA = (PxRigidActor*)PxController_getActor(controllerA);
+            var flagsA = PxActor_getActorFlags((PxActor*)actorA);
+            if ((flagsA & PxActorFlags.DisableSimulation) != 0)
             {
-                return true;
+                return false;
             }
-
-            var shapes = stackalloc PxShape[1];
-            PxRigidActor_getShapes(actorB, &shapes, 1, 0);
-            var shapeFilterData = PxShape_getQueryFilterData(&shapes[0]);
+            var actorB = (PxRigidActor*)PxController_getActor(controllerB);
+            var flagsB = PxActor_getActorFlags((PxActor*)actorB);
+            if ((flagsB & PxActorFlags.DisableSimulation) != 0)
+            {
+                return false;
+            }
+            var collisionMask = (uint)userData;
+            var shapesB = stackalloc PxShape[1];
+            PxRigidActor_getShapes(actorB, &shapesB, 1, 0);
+            var shapeFilterData = PxShape_getQueryFilterData(&shapesB[0]);
             return (shapeFilterData.word0 & collisionMask) != 0;
         }
 
@@ -496,30 +505,25 @@ namespace PhysX
             {
                 return;
             }
-
             var hitCollider = PhysicsManager.instance.GetCollider((PxActor*)hitActor, hit->shape);
             if (hitCollider == null)
             {
                 return;
             }
-
             if (hit->controller == null)
             {
                 return;
             }
-
             var controllerActor = PxController_getActor(hit->controller);
             if (controllerActor == null)
             {
                 return;
             }
-
             var controllerCollider = PhysicsManager.instance.GetCollider((PxActor*)controllerActor);
             if (controllerCollider == null)
             {
                 return;
             }
-
             _cachedControllerShapeHit.collider = hitCollider;
             _cachedControllerShapeHit.dir = hit->dir;
             _cachedControllerShapeHit.length = hit->length;

@@ -1,8 +1,6 @@
-using Codice.Client.BaseCommands;
 using MagicPhysX;
 using System.Collections.Generic;
 using System.Text;
-using Unity.VectorGraphics;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
 

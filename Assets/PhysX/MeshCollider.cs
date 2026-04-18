@@ -63,7 +63,11 @@ namespace PhysX
 
         public override void RebuildShape()
         {
-            var oldShape = shape;
+            PxShapeFlags flags = (PxShapeFlags)0;
+            if (shape != null)
+            {
+                flags = PxShape_getFlags(shape);
+            }
             DestroyShape();
             triangleMesh = null;
             convexMesh = null;
@@ -115,12 +119,8 @@ namespace PhysX
                 CreateShape((PxGeometry*)&geometry);
             }
             if (shape != null)
-            {
-                if (oldShape != null)
-                {
-                    var flags = PxShape_getFlags(oldShape);
-                    PxShape_setFlags_mut(shape, flags);
-                }
+            {         
+                PxShape_setFlags_mut(shape, flags);
                 AttachShape(shape);
             }
         }

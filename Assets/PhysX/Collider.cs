@@ -308,8 +308,7 @@ namespace PhysX
 
         protected void CreateShape(PxGeometry* geometry)
         {
-            //PxShapeFlags flags = PxShapeFlags.SimulationShape | PxShapeFlags.SceneQueryShape;
-            _shape = PxPhysics_createShape_mut(PhysicsManager.instance.physics, geometry, _material, true, (PxShapeFlags)0);
+            _shape = PxPhysics_createShape_mut(PhysicsManager.instance.physics, geometry, _material, true, 0);
             if (shape != null)
             {
                 PxShape_setLocalPose_mut(shape, (PxTransform*)Unsafe.AsPointer(ref _offset));
