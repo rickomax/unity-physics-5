@@ -63,7 +63,7 @@ namespace PhysX
 
         public override void RebuildShape()
         {
-            PxShapeFlags flags = (PxShapeFlags)0;
+            PxShapeFlags flags = 0;
             if (shape != null)
             {
                 flags = PxShape_getFlags(shape);
@@ -119,7 +119,7 @@ namespace PhysX
                 CreateShape((PxGeometry*)&geometry);
             }
             if (shape != null)
-            {         
+            {
                 PxShape_setFlags_mut(shape, flags);
                 AttachShape(shape);
             }

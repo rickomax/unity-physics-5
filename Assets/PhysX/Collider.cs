@@ -48,8 +48,16 @@ namespace PhysX
                 {
                     return;
                 }
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !value);
-                PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, value);
+                if (value)
+                {
+                    PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, false);
+                    PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, true);
+                }
+                else
+                {
+                    PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, false);
+                    PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, enabled);
+                }
             }
         }
 

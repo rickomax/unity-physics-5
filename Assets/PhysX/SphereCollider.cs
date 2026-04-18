@@ -31,7 +31,7 @@ namespace PhysX
 
         public override void RebuildShape()
         {
-            PxShapeFlags flags = (PxShapeFlags)0;
+            PxShapeFlags flags = 0;
             if (shape != null)
             {
                 flags = PxShape_getFlags(shape);
