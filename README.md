@@ -125,7 +125,7 @@ Mimics Unity’s `Rigidbody` component.
 Important differences:
 
 - PhysX actor transforms are independent from Unity transforms
-- This library synchronizes them internally
+- To modify rigidbodies position/rotation use the rigidbody `position` and `rotation` properties
 
 Additional behavior:
 
@@ -143,6 +143,7 @@ The following collider types are implemented:
 - `MeshCollider`
 
 These behave similarly to Unity equivalents but are backed by PhysX shapes.
+To modify colliders position/rotation use the collider `position` and `rotation` properties
 
 ---
 
