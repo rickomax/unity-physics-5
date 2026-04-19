@@ -15,6 +15,7 @@ namespace PhysX
         public float staticFriction = 0.6f;
 
         [SerializeField] private Vector3 _center;
+        [SerializeField] private bool _isTrigger;
 
         public Vector3 center
         {
@@ -36,7 +37,7 @@ namespace PhysX
             {
                 if (shape == null)
                 {
-                    return default;
+                    return _isTrigger;
                 }
 
                 var flags = PxShape_getFlags(shape);
@@ -44,6 +45,7 @@ namespace PhysX
             }
             set
             {
+                _isTrigger = value;
                 if (shape == null)
                 {
                     return;
@@ -211,7 +213,8 @@ namespace PhysX
         {
             if (shape != null)
             {
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !isTrigger);
+                PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, _isTrigger);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !_isTrigger);
                 PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, true);
             }
         }

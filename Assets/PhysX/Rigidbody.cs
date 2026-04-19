@@ -10,11 +10,14 @@ namespace PhysX
     [DisallowMultipleComponent]
     public unsafe class Rigidbody : MonoBehaviour
     {
+        [SerializeField] private bool _isPhysicsStatic;
+        [SerializeField] private bool _isKinematic;
+        [SerializeField] private bool _useGravity = true;
+
         private readonly List<Collider> _colliders = new List<Collider>();
         private Vector3 _kinematicTargetPosition;
         private Quaternion _kinematicTargetRotation;
         private bool _isReleased;
-        private bool _isPhysicsStatic;
 
         public bool hasDynamicActor => rigidDynamic != null;
         public bool hasStaticActor => rigidStatic != null;
@@ -47,13 +50,14 @@ namespace PhysX
             {
                 if (!hasDynamicActor)
                 {
-                    return false;
+                    return _isKinematic;
                 }
                 var flags = PxRigidBody_getRigidBodyFlags((PxRigidBody*)rigidDynamic);
                 return ((int)flags & (int)PxRigidBodyFlag.Kinematic) != 0;
             }
             set
             {
+                _isKinematic = value;
                 if (!hasDynamicActor)
                 {
                     return;
@@ -117,12 +121,13 @@ namespace PhysX
             {
                 if (!hasDynamicActor)
                 {
-                    return default;
+                    return _useGravity;
                 }
                 return ((int)PxActor_getActorFlags((PxActor*)rigidDynamic) & (int)PxActorFlag.DisableGravity) == 0;
             }
             set
             {
+                _useGravity = value;
                 if (!hasDynamicActor)
                 {
                     return;
@@ -171,6 +176,17 @@ namespace PhysX
             _kinematicTargetPosition = transform.position;
             _kinematicTargetRotation = transform.rotation;
             CreateActor();
+            ApplySerializedFlags();
+        }
+
+        private void ApplySerializedFlags()
+        {
+            if (!hasDynamicActor)
+            {
+                return;
+            }
+            isKinematic = _isKinematic;
+            useGravity = _useGravity;
         }
 
         private void CreateActor()
@@ -214,6 +230,7 @@ namespace PhysX
             rigidDynamic = null;
             rigidStatic = null;
             CreateActor();
+            ApplySerializedFlags();
             for (var i = 0; i < _colliders.Count; i++)
             {
                 _colliders[i]?.AttachExistingShape();
