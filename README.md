@@ -28,6 +28,7 @@ The current version does not include:
 - Force, impulse, or torque application methods
 - CapsuleCollider, WheelCollider (likely not supported by the underlying library at the moment), TerrainCollider
 - Capsule Character Controller
+- Hierarchies are not sync yet. Unity to Rigidbodies/Collider transforms should be sync manually (see more bellow)
 
 ---
 
@@ -116,6 +117,7 @@ Details:
 To retrieve UV coordinates from query results, use:
 - `QueryExtensions.GetUV`
 
+Trigger raycast/sweep/overlap not implemented yet
 ---
 
 ### Rigidbody
