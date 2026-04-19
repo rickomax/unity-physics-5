@@ -116,7 +116,7 @@ Details:
 
 To retrieve UV coordinates from query results, use:
 - `QueryExtensions.GetUV`
-Trigger raycast/sweep/overlap not implemented yet
+- Trigger raycast/sweep/overlap not implemented yet
 
 ---
 
