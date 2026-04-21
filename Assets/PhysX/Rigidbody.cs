@@ -106,6 +106,7 @@ namespace PhysX
                 if (isKinematic)
                 {
                     PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
+                    _kinematicTargetRotation = value;
                     transform.rotation = value;
 
                 }
