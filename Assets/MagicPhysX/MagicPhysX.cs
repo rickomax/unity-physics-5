@@ -17614,7 +17614,8 @@ namespace MagicPhysX
     [StructLayout(LayoutKind.Sequential)]
     public unsafe partial struct PxContactPairHeader
     {
-        public fixed byte/* PxActor, this length is invalid so must keep pointer and can't edit from C# */ actors[2];
+        public PxActor* actor0;
+        public PxActor* actor1;
         public byte* extraDataStream;
         public ushort extraDataStreamSize;
         public PxContactPairHeaderFlags flags;
@@ -17638,7 +17639,8 @@ namespace MagicPhysX
     [StructLayout(LayoutKind.Sequential)]
     public unsafe partial struct PxContactPair
     {
-        public fixed byte/* PxShape, this length is invalid so must keep pointer and can't edit from C# */ shapes[2];
+        public PxShape* shape0;
+        public PxShape* shape1;
         public byte* contactPatches;
         public byte* contactPoints;
         public float* contactImpulses;

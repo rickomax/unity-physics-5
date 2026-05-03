@@ -1,5 +1,7 @@
 using MagicPhysX;
+using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
@@ -10,14 +12,46 @@ namespace PhysX
     [DisallowMultipleComponent]
     public unsafe class Rigidbody : MonoBehaviour
     {
-        [SerializeField] private bool _isPhysicsStatic;
-        [SerializeField] private bool _isKinematic;
-        [SerializeField] private bool _useGravity = true;
+        public const uint DefaultPositionIterations = 8;
+        public const uint DefaultVelocityIterations = 2;
+
+        [SerializeField] private float _density = 1f;
 
         private readonly List<Collider> _colliders = new List<Collider>();
         private Vector3 _kinematicTargetPosition;
         private Quaternion _kinematicTargetRotation;
         private bool _isReleased;
+        private bool _isPhysicsStatic;
+
+        public float sleepThreshold
+        {
+            get => rigidDynamic == null ? 0f : PxRigidDynamic_getSleepThreshold(rigidDynamic);
+            set { if (rigidDynamic != null) PxRigidDynamic_setSleepThreshold_mut(rigidDynamic, value); }
+        }
+
+        public float wakeCounter
+        {
+            set { if (rigidDynamic != null) PxRigidDynamic_setWakeCounter_mut(rigidDynamic, value); }
+        }
+
+        public float stabilizationThreshold
+        {
+            set { if (rigidDynamic != null) PxRigidDynamic_setStabilizationThreshold_mut(rigidDynamic, value); } 
+        }
+
+        public float density
+        {
+            get => _density;
+            set
+            {
+                if (Mathf.Approximately(_density, value))
+                {
+                    return;
+                }
+                _density = value;
+                RecomputeMassAndInertia();
+            }
+        }
 
         public bool hasDynamicActor => rigidDynamic != null;
         public bool hasStaticActor => rigidStatic != null;
@@ -40,6 +74,68 @@ namespace PhysX
             }
         }
 
+        public bool enableCcd
+        {
+            get
+            {
+                if (!hasDynamicActor)
+                {
+                    return false;
+                }
+                var flags = PxRigidBody_getRigidBodyFlags((PxRigidBody*)rigidDynamic);
+                return ((int)flags & (int)PxRigidBodyFlag.EnableCcd) != 0;
+            }
+            set
+            {
+                if (!hasDynamicActor)
+                {
+                    return;
+                }
+                PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.EnableCcd, value);
+                PxRigidBody_setRigidBodyFlag_mut((PxRigidBody*)rigidDynamic, PxRigidBodyFlag.EnableSpeculativeCcd, value);
+            }
+        }
+
+        public float angularDamping
+        {
+            get
+            {
+                if (rigidDynamic == null)
+                {
+                    return default;
+                }
+                return PxRigidBody_getAngularDamping((PxRigidBody*)rigidDynamic);
+            }
+            set
+            {
+                if (rigidDynamic == null)
+                {
+                    return;
+                }
+                PxRigidBody_setAngularDamping_mut((PxRigidBody*)rigidDynamic, value);
+            }
+        }
+
+        public float linearDamping
+        {
+            get
+            {
+                if (rigidDynamic == null)
+                {
+                    return default;
+                }
+                return PxRigidBody_getLinearDamping((PxRigidBody*)rigidDynamic);
+            }
+            set
+            {
+                if (rigidDynamic == null)
+                {
+                    return;
+                }
+                PxRigidBody_setLinearDamping_mut((PxRigidBody*)rigidDynamic, value);
+            }
+        }
+
         public PxRigidDynamic* rigidDynamic { get; private set; }
         public PxRigidStatic* rigidStatic { get; private set; }
         public PxRigidActor* actor => hasDynamicActor ? (PxRigidActor*)rigidDynamic : (PxRigidActor*)rigidStatic;
@@ -50,14 +146,13 @@ namespace PhysX
             {
                 if (!hasDynamicActor)
                 {
-                    return _isKinematic;
+                    return false;
                 }
                 var flags = PxRigidBody_getRigidBodyFlags((PxRigidBody*)rigidDynamic);
                 return ((int)flags & (int)PxRigidBodyFlag.Kinematic) != 0;
             }
             set
             {
-                _isKinematic = value;
                 if (!hasDynamicActor)
                 {
                     return;
@@ -78,7 +173,7 @@ namespace PhysX
                 }
                 var pxTransform = PxRigidActor_getGlobalPose(actor);
                 pxTransform.p = (PxVec3)value;
-                if (isKinematic)
+                if (isKinematic && enabled)
                 {
                     PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
                     transform.position = value;
@@ -88,6 +183,7 @@ namespace PhysX
                 {
                     PxRigidActor_setGlobalPose_mut(actor, &pxTransform, true);
                 }
+                _kinematicTargetPosition = value;
             }
         }
 
@@ -102,7 +198,7 @@ namespace PhysX
                 }
                 var pxTransform = PxRigidActor_getGlobalPose(actor);
                 pxTransform.q = (PxQuat)value;
-                if (isKinematic)
+                if (isKinematic && enabled)
                 {
                     PxRigidDynamic_setKinematicTarget_mut(rigidDynamic, &pxTransform);
                     transform.rotation = value;
@@ -112,6 +208,7 @@ namespace PhysX
                 {
                     PxRigidActor_setGlobalPose_mut(actor, &pxTransform, true);
                 }
+                _kinematicTargetRotation = value;
             }
         }
 
@@ -121,13 +218,12 @@ namespace PhysX
             {
                 if (!hasDynamicActor)
                 {
-                    return _useGravity;
+                    return default;
                 }
                 return ((int)PxActor_getActorFlags((PxActor*)rigidDynamic) & (int)PxActorFlag.DisableGravity) == 0;
             }
             set
             {
-                _useGravity = value;
                 if (!hasDynamicActor)
                 {
                     return;
@@ -149,6 +245,9 @@ namespace PhysX
                 PxRigidDynamic_setLinearVelocity_mut(rigidDynamic, &v, false);
             }
         }
+
+        private IntPtr _physicsNamePtr;
+
         public string physicsName
         {
             set
@@ -157,42 +256,39 @@ namespace PhysX
                 {
                     return;
                 }
-                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
-                {
-                    PxActor_setName_mut((PxActor*)actor, bytes);
-                }
-            }
-        }
 
-        public void InitializeAsDummyStatic()
-        {
-            _isPhysicsStatic = true;
-            isKinematic = false;
-            useGravity = false;
+                if (_physicsNamePtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(_physicsNamePtr);
+                    _physicsNamePtr = IntPtr.Zero;
+                }
+
+                if (string.IsNullOrEmpty(value))
+                {
+                    PxActor_setName_mut((PxActor*)actor, null);
+                    return;
+                }
+
+                var byteCount = Encoding.UTF8.GetByteCount(value);
+                _physicsNamePtr = Marshal.AllocHGlobal(byteCount + 1);
+
+                var span = new Span<byte>((void*)_physicsNamePtr, byteCount + 1);
+                Encoding.UTF8.GetBytes(value, span);
+                span[byteCount] = 0;
+
+                PxActor_setName_mut((PxActor*)actor, (byte*)_physicsNamePtr);
+            }
         }
 
         private void Awake()
         {
-            _kinematicTargetPosition = transform.position;
-            _kinematicTargetRotation = transform.rotation;
             CreateActor();
-            ApplySerializedFlags();
-        }
-
-        private void ApplySerializedFlags()
-        {
-            if (!hasDynamicActor)
-            {
-                return;
-            }
-            isKinematic = _isKinematic;
-            useGravity = _useGravity;
         }
 
         private void CreateActor()
         {
-            var pxPosition = (PxVec3)transform.position;
-            var pxRotation = (PxQuat)transform.rotation;
+            var pxPosition = (PxVec3)Vector3.zero;
+            var pxRotation = (PxQuat)Quaternion.identity;
             var pxTransform = PxTransform_new_5(&pxPosition, &pxRotation);
             if (_isPhysicsStatic)
             {
@@ -207,9 +303,25 @@ namespace PhysX
                 rigidDynamic = PxPhysics_createRigidDynamic_mut(PhysicsManager.instance.physics, &pxTransform);
                 if (rigidDynamic != null)
                 {
+                    PxRigidDynamic_setSolverIterationCounts_mut(rigidDynamic, DefaultPositionIterations, DefaultVelocityIterations);
                     PhysicsManager.instance.AddActor((PxActor*)rigidDynamic, null);
                 }
             }
+        }
+
+        public void RecomputeMassAndInertia()
+        {
+            if (rigidDynamic == null || _density <= 0f)
+            {
+                return;
+            }
+            uint shapeCount = PxRigidActor_getNbShapes((PxRigidActor*)rigidDynamic);
+            if (shapeCount == 0)
+            {
+                return;
+            }
+            var density = _density;
+            PxRigidBodyExt_updateMassAndInertia_1((PxRigidBody*)rigidDynamic, density, null, false);
         }
 
         private void RebuildActor()
@@ -230,7 +342,6 @@ namespace PhysX
             rigidDynamic = null;
             rigidStatic = null;
             CreateActor();
-            ApplySerializedFlags();
             for (var i = 0; i < _colliders.Count; i++)
             {
                 _colliders[i]?.AttachExistingShape();
@@ -271,11 +382,11 @@ namespace PhysX
             var pose = PxRigidActor_getGlobalPose((PxRigidActor*)rigidDynamic);
             transform.SetPositionAndRotation(pose.p, pose.q);
 
-            if (isKinematic)
-            {
-                _kinematicTargetPosition = transform.position;
-                _kinematicTargetRotation = transform.rotation;
-            }
+            //if (isKinematic)
+            //{
+            //    _kinematicTargetPosition = transform.position;
+            //    _kinematicTargetRotation = transform.rotation;
+            //}
         }
 
         public void RegisterCollider(Collider collider)
@@ -317,6 +428,31 @@ namespace PhysX
             }
             rigidDynamic = null;
             rigidStatic = null;
+            if (_physicsNamePtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_physicsNamePtr);
+                _physicsNamePtr = IntPtr.Zero;
+            }
+        }
+
+        public void AddForce(Vector3 force, ForceMode mode = ForceMode.Force)
+        {
+            var pxForce = (PxVec3)force;
+            switch (mode)
+            {
+                case ForceMode.Force:
+                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Force, true);
+                    break;
+                case ForceMode.Acceleration:
+                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Acceleration, true);
+                    break;
+                case ForceMode.Impulse:
+                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Impulse, true);
+                    break;
+                case ForceMode.VelocityChange:
+                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.VelocityChange, true);
+                    break;
+            }
         }
     }
 }

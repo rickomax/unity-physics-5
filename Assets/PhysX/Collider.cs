@@ -1,5 +1,7 @@
 using MagicPhysX;
+using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
 using static MagicPhysX.NativeMethods;
@@ -9,13 +11,87 @@ namespace PhysX
     [DefaultExecutionOrder(-8)]
     public abstract unsafe class Collider : MonoBehaviour
     {
-        public float density = 10f;
-        public float dynamicFriction = 0.6f;
-        public float restitution = 0.6f;
-        public float staticFriction = 0.6f;
-
         [SerializeField] private Vector3 _center;
-        [SerializeField] private bool _isTrigger;
+
+        public float damping
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getDamping(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setDamping_mut(_material, value);
+            }
+        }
+
+        public float restitution
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getRestitution(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setRestitution_mut(_material, value);
+            }
+        }
+
+        public float dynamicFriction
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getDynamicFriction(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setDynamicFriction_mut(_material, value);
+            }
+        }
+
+        public float staticFriction
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getStaticFriction(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setStaticFriction_mut(_material, value);
+            }
+        }
 
         public Vector3 center
         {
@@ -37,7 +113,7 @@ namespace PhysX
             {
                 if (shape == null)
                 {
-                    return _isTrigger;
+                    return default;
                 }
 
                 var flags = PxShape_getFlags(shape);
@@ -45,7 +121,6 @@ namespace PhysX
             }
             set
             {
-                _isTrigger = value;
                 if (shape == null)
                 {
                     return;
@@ -150,6 +225,8 @@ namespace PhysX
         protected bool isKinematic => _attachedRigidbody?.isKinematic ?? false;
         protected bool isPhysicsStatic => _attachedRigidbody?.isPhysicsStatic ?? false;
 
+        private IntPtr _physicsNamePtr;
+
         public virtual string physicsName
         {
             set
@@ -158,16 +235,33 @@ namespace PhysX
                 {
                     return;
                 }
-                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
+
+                if (_physicsNamePtr != IntPtr.Zero)
                 {
-                    PxShape_setName_mut(shape, bytes);
+                    Marshal.FreeHGlobal(_physicsNamePtr);
+                    _physicsNamePtr = IntPtr.Zero;
                 }
+
+                if (string.IsNullOrEmpty(value))
+                {
+                    PxShape_setName_mut(shape, null);
+                    return;
+                }
+
+                var byteCount = Encoding.UTF8.GetByteCount(value);
+                _physicsNamePtr = Marshal.AllocHGlobal(byteCount + 1);
+
+                var span = new Span<byte>((void*)_physicsNamePtr, byteCount + 1);
+                Encoding.UTF8.GetBytes(value, span);
+                span[byteCount] = 0;
+
+                PxShape_setName_mut(shape, (byte*)_physicsNamePtr);
             }
         }
 
         protected virtual void Awake()
         {
-            _material = PxPhysics_createMaterial_mut(PhysicsManager.instance.physics, staticFriction, dynamicFriction, restitution);
+            _material = PxPhysics_createMaterial_mut(PhysicsManager.instance.physics, 0.6f, 0.6f, 0.1f);
             _lastLayer = gameObject.layer;
             if (!supportsAttachedRigidbody)
             {
@@ -213,8 +307,7 @@ namespace PhysX
         {
             if (shape != null)
             {
-                PxShape_setFlag_mut(shape, PxShapeFlag.TriggerShape, _isTrigger);
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !_isTrigger);
+                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !isTrigger);
                 PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, true);
             }
         }
@@ -255,6 +348,12 @@ namespace PhysX
             }
 
             _material = null;
+
+            if (_physicsNamePtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_physicsNamePtr);
+                _physicsNamePtr = IntPtr.Zero;
+            }
         }
 
         protected virtual Vector3 GetPhysicsScale() => transform.lossyScale;
@@ -301,6 +400,7 @@ namespace PhysX
             PxShape_setLocalPose_mut(shapeToAttach, (PxTransform*)Unsafe.AsPointer(ref _offset));
             PxRigidActor_attachShape_mut(actor, shapeToAttach);
             PhysicsManager.instance.RegisterShape(shapeToAttach, this);
+            _attachedRigidbody?.RecomputeMassAndInertia();
         }
 
         protected void DetachShape(PxShape* shapeToDetach)
@@ -315,6 +415,7 @@ namespace PhysX
                 PxRigidActor_detachShape_mut(actor, shapeToDetach, true);
             }
             PhysicsManager.instance.UnregisterShape(shapeToDetach);
+            _attachedRigidbody?.RecomputeMassAndInertia();
         }
 
         protected void CreateShape(PxGeometry* geometry)
@@ -346,9 +447,14 @@ namespace PhysX
         {
         }
 
+        public virtual void RebuildFilterCallbacks()
+        {
+            SetupFilterData(shape);
+        }
+
         protected void SetupFilterData(PxShape* targetShape)
         {
-            var filterData = PxFilterData_new_2((uint)(1 << gameObject.layer), 0, 0, 0);
+            var filterData = PxFilterData_new_2((uint)(1 << gameObject.layer), (uint)GetInstanceID(), 0, 0);
             PxShape_setQueryFilterData_mut(targetShape, &filterData);
             PxShape_setSimulationFilterData_mut(targetShape, &filterData);
         }

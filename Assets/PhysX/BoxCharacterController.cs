@@ -38,6 +38,10 @@ namespace PhysX
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate bool CctControllerFilterDelegate(PxController* controllerA, PxController* controllerB, void* userData);
 
+        public delegate void ControllerHitDelegate(BoxCharacterController controller, ControllerShapeHit hit);
+
+        public static ControllerHitDelegate OnPhysXControllerColliderHit;
+
         private static readonly OnControllerHitDelegate _onControllerHit = OnControllerHit;
         private static readonly OnDestructorDelegate _onDestructor = OnDestructor;
         private static readonly OnObstacleHitDelegate _onObstacleHit = OnObstacleHit;
@@ -51,18 +55,11 @@ namespace PhysX
         private static readonly IntPtr _cctControllerFilterPtr = Marshal.GetFunctionPointerForDelegate(_cctControllerFilter);
         private static readonly ControllerShapeHit _cachedControllerShapeHit = new ControllerShapeHit();
 
-        [SerializeField] private float _halfForwardExtent = 0.5f;
-        [SerializeField] private float _halfHeight = 0.5f;
-        [SerializeField] private float _halfSideExtent = 0.5f;
-        [SerializeField] private float _contactOffset = 0.1f;
-        [SerializeField] private float _slopeLimit = 45f;
-        [SerializeField] private float _stepOffset = 0.5f;
         [SerializeField] private float _invisibleWallHeight;
         [SerializeField] private float _maxJumpHeight;
         [SerializeField] private float _minDist = 0.001f;
-        [SerializeField] private float _scaleCoeff = 0.8f;
+        [SerializeField] private float _scaleCoeff = 0.999f;
         [SerializeField] private float _volumeGrowth = 1.5f;
-        [SerializeField] private Vector3 _upDirection = Vector3.up;
         [SerializeField] private PxControllerNonWalkableMode _nonWalkableMode = PxControllerNonWalkableMode.PreventClimbing;
 
         private PxController* _controller;
@@ -79,6 +76,29 @@ namespace PhysX
 
         protected override bool supportsAttachedRigidbody => false;
 
+
+        public Vector3 upDirection
+        {
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxController_getUpDirection(_controller);
+            }
+
+            set
+            {
+                if (_controller == null)
+                {
+                    return;
+                }
+                var pxVec3 = (PxVec3)value;
+                PxController_setUpDirection_mut(_controller, &pxVec3);
+            }
+        }
+
         public override PxRigidActor* actor
         {
             get
@@ -87,65 +107,126 @@ namespace PhysX
                 {
                     return null;
                 }
-
                 return (PxRigidActor*)PxController_getActor(_controller);
             }
         }
 
         public float halfForwardExtent
         {
-            get => _halfForwardExtent;
-            set { _halfForwardExtent = value; ApplyScaledExtentsToController(); }
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxBoxController_getHalfForwardExtent((PxBoxController*)_controller);
+            }
+            set {
+                if (_controller == null)
+                {
+                    return;
+                }
+                PxBoxController_setHalfForwardExtent_mut((PxBoxController*)_controller, value);
+            }
         }
 
         public float halfHeight
         {
-            get => _halfHeight;
-            set { _halfHeight = value; ApplyScaledExtentsToController(); }
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxBoxController_getHalfHeight((PxBoxController*)_controller);
+            }
+            set
+            {
+                if (_controller == null)
+                {
+                    return;
+                }
+                PxBoxController_setHalfHeight_mut((PxBoxController*)_controller, value);
+            }
         }
 
         public float halfSideExtent
         {
-            get => _halfSideExtent;
-            set { _halfSideExtent = value; ApplyScaledExtentsToController(); }
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxBoxController_getHalfSideExtent((PxBoxController*)_controller);
+            }
+            set
+            {
+                if (_controller == null)
+                {
+                    return;
+                }
+                PxBoxController_setHalfSideExtent_mut((PxBoxController*)_controller, value);
+            }
         }
 
         public float contactOffset
         {
-            get => _contactOffset;
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxController_getContactOffset(_controller);
+            }
             set
             {
-                _contactOffset = value;
-                if (_controller != null)
+                if (_controller == null)
                 {
-                    PxController_setContactOffset_mut(_controller, value);
+                    return;
                 }
+                PxController_setContactOffset_mut(_controller, value);
             }
         }
 
         public float slopeLimit
         {
-            get => _slopeLimit;
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxController_getSlopeLimit(_controller) * Mathf.Rad2Deg;
+            }
             set
             {
-                _slopeLimit = value;
-                if (_controller != null)
+                if (_controller == null)
                 {
-                    PxController_setSlopeLimit_mut(_controller, value * Mathf.Deg2Rad);
+                    return;
                 }
+                PxController_setSlopeLimit_mut(_controller, value * Mathf.Deg2Rad);
             }
         }
 
         public float stepOffset
         {
-            get => _stepOffset;
+            get
+            {
+                if (_controller == null)
+                {
+                    return default;
+                }
+                return PxController_getStepOffset(_controller);
+            }
             set
             {
-                _stepOffset = value;
-                if (_controller != null)
+                if (_controller == null)
                 {
-                    PxController_setStepOffset_mut(_controller, value);
+                    return;
                 }
+                PxController_setStepOffset_mut(_controller, value);
             }
         }
 
@@ -195,8 +276,14 @@ namespace PhysX
             }
             set
             {
-                if (_controller == null)
+                if (_controller == null || !enabled)
                 {
+                    return;
+                }
+
+                if (!IsFinite(value))
+                {
+                    Debug.LogWarning($"[BoxCharacterController] Ignoring non-finite position {value} on '{name}'.", this);
                     return;
                 }
 
@@ -215,6 +302,9 @@ namespace PhysX
 
         public Vector3 velocity => _computedVelocity;
 
+        private IntPtr _physicsNamePtr;
+
+
         public override string physicsName
         {
             set
@@ -223,11 +313,29 @@ namespace PhysX
                 {
                     return;
                 }
-                fixed (byte* bytes = Encoding.UTF8.GetBytes(value + "\0"))
+
+                if (_physicsNamePtr != IntPtr.Zero)
                 {
-                    PxActor_setName_mut((PxActor*)actor, bytes);
-                    PxShape_setName_mut(shape, bytes);
+                    Marshal.FreeHGlobal(_physicsNamePtr);
+                    _physicsNamePtr = IntPtr.Zero;
                 }
+
+                if (string.IsNullOrEmpty(value))
+                {
+                    PxActor_setName_mut((PxActor*)actor, null);
+                    PxShape_setName_mut((PxShape*)shape, null);
+                    return;
+                }
+
+                var byteCount = Encoding.UTF8.GetByteCount(value);
+                _physicsNamePtr = Marshal.AllocHGlobal(byteCount + 1);
+
+                var span = new Span<byte>((void*)_physicsNamePtr, byteCount + 1);
+                Encoding.UTF8.GetBytes(value, span);
+                span[byteCount] = 0;
+
+                PxActor_setName_mut((PxActor*)actor, (byte*)_physicsNamePtr);
+                PxShape_setName_mut((PxShape*)shape, (byte*)_physicsNamePtr);
             }
         }
 
@@ -240,22 +348,13 @@ namespace PhysX
             _controllerDesc->position.x = pxPosition.x;
             _controllerDesc->position.y = pxPosition.y;
             _controllerDesc->position.z = pxPosition.z;
-            _controllerDesc->upDirection = _upDirection;
-            _controllerDesc->slopeLimit = _slopeLimit * Mathf.Deg2Rad;
             _controllerDesc->invisibleWallHeight = _invisibleWallHeight;
             _controllerDesc->maxJumpHeight = _maxJumpHeight;
-            _controllerDesc->contactOffset = _contactOffset;
-            _controllerDesc->stepOffset = _stepOffset;
-            _controllerDesc->density = density;
+            _controllerDesc->density = 10f;
             _controllerDesc->scaleCoeff = _scaleCoeff;
             _controllerDesc->volumeGrowth = _volumeGrowth;
             _controllerDesc->nonWalkableMode = _nonWalkableMode;
             _controllerDesc->material = _material;
-
-            var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
-            _controllerDesc->halfSideExtent = scaledHalfExtents.x;
-            _controllerDesc->halfHeight = scaledHalfExtents.y;
-            _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
 
             var callbackInfo = new ControllerCallbackInfo();
             callbackInfo.controllerObstacleHitCallback = (delegate* unmanaged[Cdecl]<PxControllerObstacleHit*, void>)Marshal.GetFunctionPointerForDelegate(_onObstacleHit);
@@ -334,20 +433,35 @@ namespace PhysX
             {
                 return default;
             }
+            if (!IsFinite(displacement))
+            {
+                Debug.LogWarning($"[BoxCharacterController] Ignoring non-finite displacement {displacement} on '{name}'.", this);
+                return default;
+            }
             var elapsedTime = _firstMove ? Time.fixedDeltaTime : Time.time - _lastMoveTime;
             elapsedTime = Mathf.Max(elapsedTime, Time.fixedDeltaTime);
             var positionBefore = position;
-            var filterData = PxFilterData_new_2((uint)_cachedCollisionMask, 0, 0, 0);
+            if (!IsFinite(positionBefore))
+            {
+                Debug.LogWarning($"[BoxCharacterController] Controller '{name}' has non-finite position {positionBefore}; skipping Move.", this);
+                return default;
+            }
+            var filterData = PxFilterData_new_2((uint)_cachedCollisionMask, (uint)GetInstanceID(), 0, 0);
             var filters = PxControllerFilters_new(&filterData, _queryFilterCallback, _controllerFilterCallback);
             filters.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter;
             var flags = PxController_move_mut(_controller, (PxVec3*)&displacement, _minDist, elapsedTime, &filters, null);
             isGrounded = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
-            _computedVelocity = (position - positionBefore) / elapsedTime;
-            transform.position = position;
+            var positionAfter = position;
+            _computedVelocity = IsFinite(positionAfter) ? (positionAfter - positionBefore) / elapsedTime : Vector3.zero;
+            transform.position = positionAfter;
             _lastMoveTime = Time.time;
             _firstMove = false;
             return flags;
         }
+
+        private static bool IsFinite(Vector3 v)
+            => !float.IsNaN(v.x) && !float.IsNaN(v.y) && !float.IsNaN(v.z)
+            && !float.IsInfinity(v.x) && !float.IsInfinity(v.y) && !float.IsInfinity(v.z);
 
         public void InvalidateCache()
         {
@@ -374,9 +488,10 @@ namespace PhysX
                 if (_shape != null)
                 {
                     PhysicsManager.instance.UnregisterShape(_shape);
-                    PxController_release_mut(_controller);
-                    _controller = null;
+                    _shape = null;
                 }
+                PxController_release_mut(_controller);
+                _controller = null;
             }
             if (_controllerDesc != null)
             {
@@ -412,27 +527,14 @@ namespace PhysX
                 _controllerFilterCallback = null;
             }
             _material = null;
-        }
-
-        private void ApplyScaledExtentsToController()
-        {
-            if (_controllerDesc != null)
+            if (_physicsNamePtr != IntPtr.Zero)
             {
-                var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
-                _controllerDesc->halfSideExtent = scaledHalfExtents.x;
-                _controllerDesc->halfHeight = scaledHalfExtents.y;
-                _controllerDesc->halfForwardExtent = scaledHalfExtents.z;
-            }
-            if (_controller != null)
-            {
-                var scaledHalfExtents = Vector3.Scale(new Vector3(_halfSideExtent, _halfHeight, _halfForwardExtent), GetPhysicsScale());
-                PxBoxController_setHalfSideExtent_mut((PxBoxController*)_controller, scaledHalfExtents.x);
-                PxBoxController_setHalfHeight_mut((PxBoxController*)_controller, scaledHalfExtents.y);
-                PxBoxController_setHalfForwardExtent_mut((PxBoxController*)_controller, scaledHalfExtents.z);
+                Marshal.FreeHGlobal(_physicsNamePtr);
+                _physicsNamePtr = IntPtr.Zero;
             }
         }
 
-        public void RebuildFilterCallbacks()
+        public override void RebuildFilterCallbacks()
         {
             _lastLayer = gameObject.layer;
             _cachedCollisionMask = PhysicsManager.instance.GetCollisionMask(gameObject.layer);
@@ -461,6 +563,10 @@ namespace PhysX
             {
                 return PxQueryHitType.None;
             }
+            if (PhysicsManager.instance.GetIgnoreCollision(filterData->word1, shapeFilterData.word1))
+            {
+                return PxQueryHitType.None;
+            }
             var shapeFlags = PxShape_getFlags(shape);
             var isTrigger = ((int)shapeFlags & (int)PxShapeFlag.TriggerShape) != 0;
             return isTrigger ? PxQueryHitType.Touch : PxQueryHitType.Block;
@@ -485,7 +591,19 @@ namespace PhysX
             var shapesB = stackalloc PxShape[1];
             PxRigidActor_getShapes(actorB, &shapesB, 1, 0);
             var shapeFilterData = PxShape_getQueryFilterData(&shapesB[0]);
-            return (shapeFilterData.word0 & collisionMask) != 0;
+            if ((shapeFilterData.word0 & collisionMask) == 0)
+            {
+                return false;
+            }
+
+            var colliderA = PhysicsManager.instance.GetCollider((PxActor*)actorA);
+            var colliderB = PhysicsManager.instance.GetCollider((PxActor*)actorB);
+            if (colliderA == null || colliderB == null)
+            {
+                return true;
+            }
+
+            return !PhysicsManager.instance.GetIgnoreCollision(colliderA, colliderB);
         }
 
         [MonoPInvokeCallback(typeof(OnControllerHitDelegate))]
@@ -532,6 +650,11 @@ namespace PhysX
             _cachedControllerShapeHit.worldPos.x = (float)hit->worldPos.x;
             _cachedControllerShapeHit.worldPos.y = (float)hit->worldPos.y;
             _cachedControllerShapeHit.worldPos.z = (float)hit->worldPos.z;
+            if (OnPhysXControllerColliderHit != null)
+            {
+                OnPhysXControllerColliderHit((BoxCharacterController)controllerCollider, _cachedControllerShapeHit);
+                return;
+            }
             controllerCollider.gameObject.SendMessage("OnPhysXControllerColliderHit", _cachedControllerShapeHit, SendMessageOptions.DontRequireReceiver);
         }
 

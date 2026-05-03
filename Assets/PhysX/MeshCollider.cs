@@ -92,13 +92,15 @@ namespace PhysX
                 triangleMesh = PhysicsManager.instance.GetTriangleMesh(_sharedMesh);
                 if (triangleMesh == null)
                 {
-                    throw new Exception("Could not retrieve baked PhysX triangle mesh.");
+                    Debug.LogError("Could not retrieve baked PhysX triangle mesh.");
+                    return;
                 }
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxTriangleMeshGeometry_new(triangleMesh, &meshScale, 0);
                 if (!PxTriangleMeshGeometry_isValid(&geometry))
                 {
-                    throw new Exception("Could not generate PhysX triangle mesh geometry.");
+                    Debug.LogError("Could not generate PhysX triangle mesh geometry.");
+                    return;
                 }
                 CreateShape((PxGeometry*)&geometry);
             }
@@ -108,13 +110,15 @@ namespace PhysX
                 convexMesh = PhysicsManager.instance.GetConvexMesh(_sharedMesh);
                 if (convexMesh == null)
                 {
-                    throw new Exception("Could not retrieve baked PhysX convex mesh.");
+                    Debug.LogError("Could not retrieve baked PhysX convex mesh.");
+                    return;
                 }
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxConvexMeshGeometry_new(convexMesh, &meshScale, 0);
                 if (!PxConvexMeshGeometry_isValid(&geometry))
                 {
-                    throw new Exception("Could not generate PhysX convex mesh geometry.");
+                    Debug.LogError("Could not generate PhysX convex mesh geometry.");
+                    return;
                 }
                 CreateShape((PxGeometry*)&geometry);
             }

@@ -1,7 +1,6 @@
 using AOT;
 using MagicPhysX;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -18,7 +17,7 @@ namespace PhysX
     public unsafe class PhysicsManager : MonoBehaviour
     {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void ContactDelegate(void* unk, PxContactPairHeader* pairHeader, PxContactPair* contactPair, uint nbPairs);
+        private delegate void ContactDelegate(void* userData, PxContactPairHeader* pairHeader, PxContactPair* contactPair, uint nbPairs);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate PxFilterFlags CustomFilterShaderDelegate(FilterShaderCallbackInfo* callbackInfo);
@@ -35,16 +34,42 @@ namespace PhysX
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void TriggerDelegate(void* userData, PxTriggerPair* pairs, uint count);
 
-        public struct CollisionKey
+        public delegate void TriggerEventDelegate(Collider a, Collider b);
+        public delegate void CollisionEventDelegate(Collider a, Collider b);
+
+        public static TriggerEventDelegate OnPhysXTriggerEnter;
+        public static TriggerEventDelegate OnPhysXTriggerStay;
+        public static TriggerEventDelegate OnPhysXTriggerExit;
+        public static CollisionEventDelegate OnPhysXCollisionEnter;
+        public static CollisionEventDelegate OnPhysXCollisionStay;
+        public static CollisionEventDelegate OnPhysXCollisionExit;
+
+        public struct LayerPairKey
         {
             public int layerA;
             public int layerB;
 
-            public CollisionKey(int layerA, int layerB) { this.layerA = layerA; this.layerB = layerB; }
+            public LayerPairKey(int layerA, int layerB) { this.layerA = layerA; this.layerB = layerB; }
 
-            public override bool Equals(object obj) => obj is CollisionKey other && ((layerA == other.layerA && layerB == other.layerB) || (layerA == other.layerB && layerB == other.layerA));
+            public override bool Equals(object obj) => obj is LayerPairKey other && ((layerA == other.layerA && layerB == other.layerB) || (layerA == other.layerB && layerB == other.layerA));
 
             public override int GetHashCode() => layerA < layerB ? (layerA * 31 + layerB) : (layerB * 31 + layerA);
+        }
+
+        public struct ColliderPairKey
+        {
+            public uint colliderA;
+            public uint colliderB;
+
+            public ColliderPairKey(uint colliderA, uint colliderB)
+            {
+                this.colliderA = colliderA;
+                this.colliderB = colliderB;
+            }
+
+            public override bool Equals(object obj) => obj is ColliderPairKey other && ((colliderA == other.colliderA && colliderB == other.colliderB) || (colliderA == other.colliderB && colliderB == other.colliderA));
+
+            public override int GetHashCode() => colliderA < colliderB ? ((int)colliderA * 31 + (int)colliderB) : ((int)colliderB * 31 + (int)colliderA);
         }
 
         private const float InitialOverlapEpsilon = 1e-4f;
@@ -96,18 +121,42 @@ namespace PhysX
         private PxQueryFilterCallback* _blockingQueryFilterCallback;
         private PxQueryFilterCallback* _nonBlockingQueryFilterCallback;
         private byte* _scratchBuffer;
-
-        private HashSet<CollisionKey> _ignoredLayerCollisions;
+        private HashSet<LayerPairKey> _ignoredLayerCollisions;
+        private HashSet<ColliderPairKey> _ignoredColliderCollisions;
         private Dictionary<int, string> _layerNames;
         private int[] _collisionMasks;
-        private float _nextUpdateTime;
+        private float _stepAccumulator;
         private int _nextId = 1;
+
+        private BoxCollider _sweepBoxCollider;
+        private SphereCollider _sweepSphereCollider;
 
         public static PhysicsManager instance { get; private set; }
         public static bool isShuttingDown { get; private set; }
         public Rigidbody dummyRigidbody => _dummyRigidbody;
         public float updateInterval => _updateInterval == 0f ? Time.fixedDeltaTime : _updateInterval;
         public PxPhysics* physics => _physics;
+
+        public Vector3 gravity
+        {
+            get
+            {
+                if (_scene == null)
+                {
+                    return default;
+                }
+                return PxScene_getGravity(_scene);
+            }
+            set
+            {
+                if (_scene == null)
+                {
+                    return;
+                }
+                var pxVec3 = (PxVec3)value;
+                PxScene_setGravity_mut(_scene, &pxVec3);
+            }
+        }
 
         private void Awake()
         {
@@ -118,13 +167,55 @@ namespace PhysX
             CreateCallbacks();
             CreateControllerManager();
             CreateDummyRigidbody();
-            StartCoroutine(UpdatePhysics());
+            CreateSweepColliders();
+            //var pvdClient = PxScene_getScenePvdClient_mut(_scene);
+            //if (pvdClient != null)
+            //{
+            //    PxPvdSceneClient_setScenePvdFlag_mut(pvdClient, PxPvdSceneFlag.TransmitScenequeries, true);
+            //}
+        }
+
+        private void FixedUpdate()
+        {
+            if (_scene == null)
+            {
+                return;
+            }
+            var step = updateInterval;
+            if (step <= 0f)
+            {
+                return;
+            }
+            _stepAccumulator += Time.fixedDeltaTime;
+            while (_stepAccumulator >= step)
+            {
+                UpdateInternal(step);
+                _stepAccumulator -= step;
+            }
+        }
+
+        private void CreateSweepColliders()
+        {   
+            var sweepGameObject = new GameObject("SweepColliders");
+            sweepGameObject.transform.SetParent(transform, false);
+            _sweepBoxCollider = sweepGameObject.AddComponent<BoxCollider>();
+            _sweepBoxCollider.halfExtents = new Vector3(0.5f, 0.5f, 0.5f);
+            _sweepBoxCollider.enabled = false;
+            _sweepSphereCollider = sweepGameObject.AddComponent<SphereCollider>();
+            _sweepSphereCollider.radius = 0.5f;
+            _sweepSphereCollider.enabled = false;
         }
 
         public void OnDestroy()
         {
             instance = null;
             isShuttingDown = true;
+            OnPhysXTriggerEnter = null;
+            OnPhysXTriggerStay = null;
+            OnPhysXTriggerExit = null;
+            OnPhysXCollisionEnter = null;
+            OnPhysXCollisionStay = null;
+            OnPhysXCollisionExit = null;
             if (_colliders.Count > 0)
             {
                 var collidersToRelease = new HashSet<Collider>(_colliders.Values);
@@ -137,6 +228,7 @@ namespace PhysX
             _colliders.Clear();
             _shapeColliders.Clear();
             _characterControllers.Clear();
+            _ignoredColliderCollisions.Clear();
             foreach (var entry in _triangleMeshes)
             {
                 PxTriangleMesh_release_mut((PxTriangleMesh*)entry.Value);
@@ -151,6 +243,10 @@ namespace PhysX
             {
                 PxControllerManager_release_mut(_controllerManager);
                 _controllerManager = null;
+            }
+            if (_scene != null)
+            {
+                PxScene_setSimulationEventCallback_mut(_scene, null);
             }
             if (_simulationEventCallback != null)
             {
@@ -269,12 +365,13 @@ namespace PhysX
             _sceneDesc = (PxSceneDesc*)_sceneDescPtr;
             PxSceneDesc_setToDefault_mut(_sceneDesc, (PxTolerancesScale*)Unsafe.AsPointer(ref _toleranceScale));
             _sceneDesc->gravity = Physics.gravity;
-            _dispatcher = phys_PxDefaultCpuDispatcherCreate(1, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
+            var workerCount = (uint)Math.Clamp(SystemInfo.processorCount - 1, 2, 4);
+            _dispatcher = phys_PxDefaultCpuDispatcherCreate(workerCount, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
             _sceneDesc->cpuDispatcher = (PxCpuDispatcher*)_dispatcher;
             _sceneDesc->kineKineFilteringMode = PxPairFilteringMode.Keep;
             _sceneDesc->staticKineFilteringMode = PxPairFilteringMode.Keep;
             _sceneDesc->broadPhaseType = PxBroadPhaseType.Sap;
-            _sceneDesc->flags |= PxSceneFlags.EnablePcm;
+            _sceneDesc->flags |= PxSceneFlags.EnablePcm | PxSceneFlags.EnableCcd | PxSceneFlags.EnableStabilization;
             enable_custom_filter_shader(_sceneDesc, (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(_customFilterShader), 0u);
             if (!PxSceneDesc_isValid(_sceneDesc))
             {
@@ -305,7 +402,8 @@ namespace PhysX
         private void CreateControllerManager()
         {
             _controllerManager = phys_PxCreateControllerManager(_scene, false);
-            PxControllerManager_setOverlapRecoveryModule_mut(_controllerManager, true);
+            //PxControllerManager_setOverlapRecoveryModule_mut(_controllerManager, false);
+            //PxControllerManager_setPreciseSweeps_mut(_controllerManager, false);
         }
 
         private void CreateDummyRigidbody()
@@ -315,12 +413,15 @@ namespace PhysX
             {
                 _dummyRigidbody = gameObject.AddComponent<Rigidbody>();
             }
-            _dummyRigidbody.InitializeAsDummyStatic();
+            _dummyRigidbody.isPhysicsStatic = true;
+            _dummyRigidbody.isKinematic = false;
+            _dummyRigidbody.useGravity = false;
         }
 
         private void BuildLayerCollisionDictionary()
         {
-            _ignoredLayerCollisions = new HashSet<CollisionKey>();
+            _ignoredColliderCollisions = new HashSet<ColliderPairKey>();
+            _ignoredLayerCollisions = new HashSet<LayerPairKey>();
             _collisionMasks = new int[layerCount];
             for (var layer1 = 0; layer1 < layerCount; layer1++)
             {
@@ -328,7 +429,7 @@ namespace PhysX
                 {
                     if (Physics.GetIgnoreLayerCollision(layer1, layer2))
                     {
-                        _ignoredLayerCollisions.Add(new CollisionKey(layer1, layer2));
+                        _ignoredLayerCollisions.Add(new LayerPairKey(layer1, layer2));
                     }
                     else
                     {
@@ -343,27 +444,13 @@ namespace PhysX
             }
         }
 
-        private IEnumerator UpdatePhysics()
-        {
-            _nextUpdateTime = Time.time + updateInterval;
-            while (true)
-            {
-                if (Time.time < _nextUpdateTime)
-                {
-                    yield return null;
-                }
-                UpdateInternal();
-                _nextUpdateTime = Time.time + updateInterval;
-            }
-        }
-
-        private void UpdateInternal()
+        private void UpdateInternal(float dt)
         {
             if (_scene == null)
             {
-                throw new NullReferenceException();
+                return;
             }
-            PxScene_simulate_mut(_scene, Time.fixedDeltaTime, null, _scratchBuffer, scratchBlockSize, true);
+            PxScene_simulate_mut(_scene, dt, null, _scratchBuffer, scratchBlockSize, true);
             uint error = 0;
             PxScene_fetchResults_mut(_scene, true, &error);
             if (error != 0)
@@ -550,6 +637,18 @@ namespace PhysX
             return result;
         }
 
+        public int OverlapAllBox(Vector3 position, Vector3 halfExtents, Quaternion rotation, OverlapHit[] overlapHits, int mask)
+        {
+            _sweepBoxCollider.halfExtents = halfExtents;
+            return OverlapAll(_sweepBoxCollider, position, rotation, overlapHits, mask);
+        }
+
+        public int OverlapAllSphere(Vector3 position, float radius, OverlapHit[] overlapHits, int mask)
+        {
+            _sweepSphereCollider.radius = radius;
+            return OverlapAll(_sweepSphereCollider, position, Quaternion.identity, overlapHits, mask);
+        }
+
         public bool Overlap(Collider collider, Vector3 position, Quaternion rotation, out OverlapHit overlapHit, int mask)
         {
             if (collider.shape == null)
@@ -669,6 +768,26 @@ namespace PhysX
             }
             return result;
         }
+
+        public bool BoxCast(Vector3 center, Vector3 halfExtents, Vector3 direction, Quaternion rotation, float distance, out SweepHit sweepHit, int mask, bool hitTriggers = false, float inflation = 0f)
+        {
+            _sweepBoxCollider.halfExtents = halfExtents;
+            return Sweep(_sweepBoxCollider, center, rotation, direction, distance, out sweepHit, mask, hitTriggers, inflation);
+        }
+
+
+        public int BoxCastAll(Vector3 center, Vector3 halfExtents, Vector3 direction, Quaternion rotation, float distance, SweepHit[] sweepHits, int mask, out bool outBlockingHit, bool hitTriggers = false, float inflation = 0f)
+        {
+            _sweepBoxCollider.halfExtents = halfExtents;
+            return SweepAll(_sweepBoxCollider, center, rotation, direction, distance, sweepHits, mask, out outBlockingHit, hitTriggers, inflation);
+        }
+
+        public int SphereCastAll(Vector3 center, float radius, Vector3 direction, Quaternion rotation, float distance, SweepHit[] sweepHits, int mask, out bool outBlockingHit, bool hitTriggers = false, float inflation = 0f)
+        {
+            _sweepSphereCollider.radius = radius;
+            return SweepAll(_sweepSphereCollider, center, rotation, direction, distance, sweepHits, mask, out outBlockingHit, hitTriggers, inflation);
+        }
+
         public void BakeMesh(Mesh mesh, bool convex)
         {
             if (mesh == null)
@@ -770,6 +889,46 @@ namespace PhysX
         {
             return _collisionMasks[layer];
         }
+
+        public void IgnoreCollision(Collider colliderA, Collider colliderB, bool ignore = true)
+        {
+            if (colliderA == null || colliderB == null || colliderA == colliderB)
+            {
+                return;
+            }
+
+            var pair = new ColliderPairKey((uint)colliderA.GetInstanceID(), (uint)colliderB.GetInstanceID());
+            if (ignore)
+            {
+                _ignoredColliderCollisions.Add(pair);
+            }
+            else
+            {
+                _ignoredColliderCollisions.Remove(pair);
+            }
+        }
+
+        public bool GetIgnoreCollision(Collider colliderA, Collider colliderB)
+        {
+            if (colliderA == null || colliderB == null || colliderA == colliderB)
+            {
+                return false;
+            }
+
+            var pair = new ColliderPairKey((uint)colliderA.GetInstanceID(), (uint)colliderB.GetInstanceID());
+            return _ignoredColliderCollisions.Contains(pair);
+        }
+
+        public bool GetIgnoreCollision(uint colliderIdA, uint colliderIdB)
+        {
+            if (colliderIdA == 0u || colliderIdB == 0u || colliderIdA == colliderIdB)
+            {
+                return false;
+            }
+
+            var pair = new ColliderPairKey(colliderIdA, colliderIdB);
+            return _ignoredColliderCollisions.Contains(pair);
+        }
         private static string PtrToStringASCII(sbyte* ptr) => Marshal.PtrToStringAnsi((IntPtr)ptr);
 
         private static bool FilterByLayer(PxFilterData* queryFilterData, PxShape* shape)
@@ -816,7 +975,65 @@ namespace PhysX
         }
 
         [MonoPInvokeCallback(typeof(ContactDelegate))]
-        private static void Contact(void* unk, PxContactPairHeader* pairHeader, PxContactPair* contactPairs, uint nbPairs) { }
+        private static void Contact(void* userData, PxContactPairHeader* pairHeader, PxContactPair* contactPairs, uint nbPairs)
+        {
+            if (instance == null || pairHeader == null)
+            {
+                return;
+            }
+            var actor0 = pairHeader->actor0;
+            var actor1 = pairHeader->actor1;
+            for (uint i = 0; i < nbPairs; i++)
+            {
+                var pair = contactPairs[i];
+                var removed = (int)pair.flags & ((int)PxContactPairFlags.RemovedShape0 | (int)PxContactPairFlags.RemovedShape1);
+                if (removed != 0)
+                {
+                    continue;
+                }
+                var collider0 = instance.GetCollider(actor0, pair.shape0);
+                var collider1 = instance.GetCollider(actor1, pair.shape1);
+                if (collider0 == null || collider1 == null)
+                {
+                    continue;
+                }
+                var events = (int)pair.events;
+                string message;
+                if ((events & (int)PxPairFlags.NotifyTouchFound) != 0)
+                {
+                    if (OnPhysXCollisionEnter != null)
+                    {
+                        OnPhysXCollisionEnter(collider0, collider1);
+                        continue;
+                    }
+                    message = "OnPhysXCollisionEnter";
+                }
+                else if ((events & (int)PxPairFlags.NotifyTouchPersists) != 0)
+                {
+                    if (OnPhysXCollisionStay != null)
+                    {
+                        OnPhysXCollisionStay(collider0, collider1);
+                        continue;
+                    }
+                    message = "OnPhysXCollisionStay";
+                }
+                else if ((events & (int)PxPairFlags.NotifyTouchLost) != 0)
+                {
+                    if (OnPhysXCollisionExit != null)
+                    {
+                        OnPhysXCollisionExit(collider0, collider1);
+                        continue;
+                    }
+                    message = "OnPhysXCollisionExit";
+                }
+                else
+                {
+                    continue;
+                }
+                collider0.gameObject.SendMessage(message, collider1, SendMessageOptions.DontRequireReceiver);
+                collider1.gameObject.SendMessage(message, collider0, SendMessageOptions.DontRequireReceiver);
+            }
+        }
 
         [MonoPInvokeCallback(typeof(TriggerDelegate))]
         private static void Trigger(void* userData, PxTriggerPair* pairs, uint count)
@@ -835,7 +1052,29 @@ namespace PhysX
                 {
                     continue;
                 }
-                var message = pair.status == PxPairFlag.NotifyTouchFound ? "OnPhysXTriggerEnter" : pair.status == PxPairFlag.NotifyTouchLost ? "OnPhysXTriggerExit" : null;
+                string message;
+                switch (pair.status)
+                {
+                    case PxPairFlag.NotifyTouchFound:
+                        if (OnPhysXTriggerEnter != null)
+                        {
+                            OnPhysXTriggerEnter(triggerCollider, otherCollider);
+                            return;
+                        }
+                        message = "OnPhysXTriggerEnter";
+                        break;
+                    case PxPairFlag.NotifyTouchLost:
+                        if (OnPhysXTriggerExit != null)
+                        {
+                            OnPhysXTriggerExit(triggerCollider, otherCollider);
+                            return;
+                        }
+                        message = "OnPhysXTriggerExit";
+                        break;
+                    default:
+                        message = null;
+                        break;
+                }
                 if (message == null)
                 {
                     continue;
@@ -848,20 +1087,36 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CustomFilterShaderDelegate))]
         private static PxFilterFlags CustomFilterShader(FilterShaderCallbackInfo* callbackInfo)
         {
-            PxPairFlags flags;
-            if (phys_PxFilterObjectIsTrigger(callbackInfo->attributes0) || phys_PxFilterObjectIsTrigger(callbackInfo->attributes1))
+            var isIgnoredColliderPair = instance.GetIgnoreCollision(callbackInfo->filterData0.word1, callbackInfo->filterData1.word1);
+            if (isIgnoredColliderPair)
             {
-                flags = PxPairFlags.TriggerDefault;
+                *callbackInfo->pairFlags = 0;
+                return PxFilterFlags.Suppress;
             }
-            else
-            {
-                flags = PxPairFlags.ContactDefault;
-            }
+
             var layer0 = TrailingZeroCount(callbackInfo->filterData0.word0);
             var layer1 = TrailingZeroCount(callbackInfo->filterData1.word0);
-            var isIgnored = instance._ignoredLayerCollisions.Contains(new CollisionKey(layer0, layer1));
-            *callbackInfo->pairFlags = flags;
-            return isIgnored ? PxFilterFlags.Suppress : 0;
+            var isIgnored = instance._ignoredLayerCollisions.Contains(new LayerPairKey(layer0, layer1));
+            if (isIgnored)
+            {
+                *callbackInfo->pairFlags = 0;
+                return PxFilterFlags.Suppress;
+            }
+            var isTriggerPair = phys_PxFilterObjectIsTrigger(callbackInfo->attributes0) || phys_PxFilterObjectIsTrigger(callbackInfo->attributes1);
+            if (isTriggerPair)
+            {
+                *callbackInfo->pairFlags = PxPairFlags.TriggerDefault;
+                return 0;
+            }
+            var isKinematic0 = phys_PxFilterObjectIsKinematic(callbackInfo->attributes0);
+            var isKinematic1 = phys_PxFilterObjectIsKinematic(callbackInfo->attributes1);
+            if (isKinematic0 || isKinematic1)
+            {
+                *callbackInfo->pairFlags = PxPairFlags.DetectDiscreteContact | PxPairFlags.NotifyTouchFound | PxPairFlags.NotifyTouchPersists | PxPairFlags.NotifyTouchLost;
+                return 0;
+            }
+            *callbackInfo->pairFlags = PxPairFlags.DetectDiscreteContact | PxPairFlags.DetectCcdContact | PxPairFlags.SolveContact;
+            return 0;
         }
 
         [MonoPInvokeCallback(typeof(ReportErrorDelegate))]
