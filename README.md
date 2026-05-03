@@ -78,6 +78,10 @@ Several methods emulate Unity’s Physics API, with some differences:
 - `LineCastAll`
 - `Raycast`
 - `RaycastAll`
+- `SphereCast`
+- `SphereCastAll`
+- `BoxCast`
+- `BoxCastAll`
 
 Differences from Unity:
 
@@ -128,11 +132,6 @@ Important differences:
 
 - PhysX actor transforms are independent from Unity transforms
 - To modify rigidbodies position/rotation use the rigidbody `position` and `rotation` properties
-
-Additional behavior:
-
-- Can be made static via `physicsStatic`
-- Can be made kinematic via `isKinematic`
 
 ---
 
