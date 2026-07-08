@@ -127,15 +127,20 @@ namespace PhysX
         private int[] _collisionMasks;
         private float _stepAccumulator;
         private int _nextId = 1;
+        private bool _inSimulation;
+        private bool _disposed;
+        private readonly List<Action> _deferredActions = new List<Action>();
 
         private BoxCollider _sweepBoxCollider;
         private SphereCollider _sweepSphereCollider;
 
         public static PhysicsManager instance { get; private set; }
         public static bool isShuttingDown { get; private set; }
+        public bool inSimulation => _inSimulation;
         public Rigidbody dummyRigidbody => _dummyRigidbody;
         public float updateInterval => _updateInterval == 0f ? Time.fixedDeltaTime : _updateInterval;
         public PxPhysics* physics => _physics;
+        public Dictionary<Mesh, IntPtr> triangleMeshes => _triangleMeshes;
 
         public Vector3 gravity
         {
@@ -161,6 +166,7 @@ namespace PhysX
         private void Awake()
         {
             instance = this;
+            RegisterLifecycleHooks();
             InitialSetup();
             CreatePhysics();
             CreateScene();
@@ -195,7 +201,7 @@ namespace PhysX
         }
 
         private void CreateSweepColliders()
-        {   
+        {
             var sweepGameObject = new GameObject("SweepColliders");
             sweepGameObject.transform.SetParent(transform, false);
             _sweepBoxCollider = sweepGameObject.AddComponent<BoxCollider>();
@@ -206,8 +212,49 @@ namespace PhysX
             _sweepSphereCollider.enabled = false;
         }
 
-        public void OnDestroy()
+        private void OnDestroy()
         {
+            Shutdown();
+        }
+
+
+        private void RegisterLifecycleHooks()
+        {
+            Application.quitting += Shutdown;
+#if UNITY_EDITOR
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+#endif
+        }
+
+        private void UnregisterLifecycleHooks()
+        {
+            Application.quitting -= Shutdown;
+#if UNITY_EDITOR
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            UnityEditor.EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+#endif
+        }
+
+#if UNITY_EDITOR
+        private void OnPlayModeStateChanged(UnityEditor.PlayModeStateChange change)
+        {
+            if (change == UnityEditor.PlayModeStateChange.ExitingPlayMode)
+            {
+                Shutdown();
+            }
+        }
+#endif
+
+        public void Shutdown()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            UnregisterLifecycleHooks();
+            DrainDeferredActions();
             instance = null;
             isShuttingDown = true;
             OnPhysXTriggerEnter = null;
@@ -450,12 +497,56 @@ namespace PhysX
             {
                 return;
             }
-            PxScene_simulate_mut(_scene, dt, null, _scratchBuffer, scratchBlockSize, true);
-            uint error = 0;
-            PxScene_fetchResults_mut(_scene, true, &error);
-            if (error != 0)
+            _inSimulation = true;
+            try
             {
-                Debug.LogError($"PhysX Error: {(PxErrorCode)error}");
+                PxScene_simulate_mut(_scene, dt, null, _scratchBuffer, scratchBlockSize, true);
+                uint error = 0;
+                PxScene_fetchResults_mut(_scene, true, &error);
+                if (error != 0)
+                {
+                    Debug.LogError($"PhysX Error: {(PxErrorCode)error}");
+                }
+            }
+            finally
+            {
+                _inSimulation = false;
+            }
+            DrainDeferredActions();
+        }
+
+        public void RunDeferred(Action action)
+        {
+            if (action == null)
+            {
+                return;
+            }
+            if (_inSimulation)
+            {
+                _deferredActions.Add(action);
+                return;
+            }
+            action();
+        }
+
+        private void DrainDeferredActions()
+        {
+            if (_deferredActions.Count == 0)
+            {
+                return;
+            }
+            var snapshot = _deferredActions.ToArray();
+            _deferredActions.Clear();
+            for (var i = 0; i < snapshot.Length; i++)
+            {
+                try
+                {
+                    snapshot[i]();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                }
             }
         }
 
@@ -840,12 +931,12 @@ namespace PhysX
                     var triMesh = phys_PxCreateTriangleMesh(&cookingParams, &desc, phys_PxGetStandaloneInsertionCallback(), &cookResult);
                     if (cookResult == PxTriangleMeshCookingResult.Failure || triMesh == null)
                     {
-                        Debug.LogWarning("PhysX triangle mesh cooking failed");
+                        Debug.LogWarning("PhysX: Triangle mesh cooking failed");
                         return;
                     }
                     if (cookResult == PxTriangleMeshCookingResult.LargeTriangle)
                     {
-                        Debug.LogWarning($"Mesh '{mesh.name}' has large triangles. Physics might not work correctly");
+                        Debug.LogWarning($"PhysX: Mesh '{mesh.name}' has large triangles. Physics might not work correctly");
                     }
                     _triangleMeshes.Add(mesh, (IntPtr)triMesh);
                 }
@@ -896,7 +987,6 @@ namespace PhysX
             {
                 return;
             }
-
             var pair = new ColliderPairKey((uint)colliderA.GetInstanceID(), (uint)colliderB.GetInstanceID());
             if (ignore)
             {
@@ -1038,6 +1128,10 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(TriggerDelegate))]
         private static void Trigger(void* userData, PxTriggerPair* pairs, uint count)
         {
+            if (instance == null)
+            {
+                return;
+            }
             for (uint i = 0; i < count; i++)
             {
                 var pair = pairs[i];
@@ -1087,6 +1181,11 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CustomFilterShaderDelegate))]
         private static PxFilterFlags CustomFilterShader(FilterShaderCallbackInfo* callbackInfo)
         {
+            if (instance == null)
+            {
+                *callbackInfo->pairFlags = 0;
+                return PxFilterFlags.Suppress;
+            }
             var isIgnoredColliderPair = instance.GetIgnoreCollision(callbackInfo->filterData0.word1, callbackInfo->filterData1.word1);
             if (isIgnoredColliderPair)
             {
@@ -1115,11 +1214,30 @@ namespace PhysX
                 *callbackInfo->pairFlags = PxPairFlags.DetectDiscreteContact | PxPairFlags.NotifyTouchFound | PxPairFlags.NotifyTouchPersists | PxPairFlags.NotifyTouchLost;
                 return 0;
             }
-            *callbackInfo->pairFlags = PxPairFlags.DetectDiscreteContact | PxPairFlags.DetectCcdContact | PxPairFlags.SolveContact;
+            *callbackInfo->pairFlags = PxPairFlags.DetectDiscreteContact | PxPairFlags.DetectCcdContact | PxPairFlags.SolveContact | PxPairFlags.NotifyTouchFound | PxPairFlags.NotifyTouchPersists | PxPairFlags.NotifyTouchLost;
             return 0;
         }
 
         [MonoPInvokeCallback(typeof(ReportErrorDelegate))]
-        private static void ReportError(PxErrorCode code, sbyte* message, sbyte* file, uint line, void* userData) => Debug.LogError($"PhysX error [{code}]: {PtrToStringASCII(message)} at {PtrToStringASCII(file)}:{line}");
+        private static void ReportError(PxErrorCode code, sbyte* message, sbyte* file, uint line, void* userData)
+        {
+            var formattedMessage = $"PhysX :{PtrToStringASCII(message)} at {PtrToStringASCII(file)}:{line}";
+            switch (code)
+            {
+                case PxErrorCode.NoError:
+                    break;
+                case PxErrorCode.DebugInfo:
+                    Debug.Log(formattedMessage);
+                    break;
+                case PxErrorCode.DebugWarning:
+                case PxErrorCode.PerfWarning:
+                    Debug.LogWarning(formattedMessage);
+                    break;
+                default:
+                    Debug.LogError(formattedMessage);
+                    break;
+            }
+
+        }
     }
 }

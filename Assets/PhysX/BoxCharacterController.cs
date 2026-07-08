@@ -236,7 +236,18 @@ namespace PhysX
         public float scaleCoeff { get => _scaleCoeff; set => _scaleCoeff = value; }
         public float volumeGrowth { get => _volumeGrowth; set => _volumeGrowth = value; }
         public bool isGrounded { get; private set; }
-        public PxControllerNonWalkableMode nonWalkableMode { get => _nonWalkableMode; set => _nonWalkableMode = value; }
+        public PxControllerNonWalkableMode nonWalkableMode
+        {
+            get => _nonWalkableMode;
+            set
+            {
+                _nonWalkableMode = value;
+                if (_controller != null)
+                {
+                    PxController_setNonWalkableMode_mut(_controller, value);
+                }
+            }
+        }
 
         public Vector3 footPosition
         {
@@ -283,7 +294,7 @@ namespace PhysX
 
                 if (!IsFinite(value))
                 {
-                    Debug.LogWarning($"[BoxCharacterController] Ignoring non-finite position {value} on '{name}'.", this);
+                    Debug.LogWarning($"PhsyX: [BoxCharacterController] Ignoring non-finite position {value} on '{name}'.", this);
                     return;
                 }
 
@@ -390,24 +401,34 @@ namespace PhysX
         protected override void OnEnable()
         {
             base.OnEnable();
-            if (actor != null)
-            {
-                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, false);
-            }
+            SetActorDisableSimulation(false);
         }
 
         protected override void OnDisable()
         {
             base.OnDisable();
-            if (actor != null)
+            SetActorDisableSimulation(true);
+        }
+
+        private void SetActorDisableSimulation(bool disable)
+        {
+            if (PhysicsManager.instance == null || actor == null)
             {
-                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, true);
+                return;
             }
+            var capturedActor = (IntPtr)(PxActor*)actor;
+            var pm = PhysicsManager.instance;
+            if (pm != null && pm.inSimulation)
+            {
+                pm.RunDeferred(() => PxActor_setActorFlag_mut((PxActor*)capturedActor, PxActorFlag.DisableSimulation, disable));
+                return;
+            }
+            PxActor_setActorFlag_mut((PxActor*)capturedActor, PxActorFlag.DisableSimulation, disable);
         }
         protected override void Update()
         {
             base.Update();
-            if (_controller == null)
+            if (PhysicsManager.instance == null || _controller == null)
             {
                 return;
             }
@@ -419,7 +440,7 @@ namespace PhysX
 
         private void LateUpdate()
         {
-            if (_controller == null)
+            if (PhysicsManager.instance == null || _controller == null)
             {
                 return;
             }
@@ -429,13 +450,13 @@ namespace PhysX
 
         public PxControllerCollisionFlags Move(Vector3 displacement)
         {
-            if (_controller == null)
+            if (_controller == null || !enabled)
             {
                 return default;
             }
             if (!IsFinite(displacement))
             {
-                Debug.LogWarning($"[BoxCharacterController] Ignoring non-finite displacement {displacement} on '{name}'.", this);
+                Debug.LogWarning($"PhsyX: [BoxCharacterController] Ignoring non-finite displacement {displacement} on '{name}'.", this);
                 return default;
             }
             var elapsedTime = _firstMove ? Time.fixedDeltaTime : Time.time - _lastMoveTime;
@@ -443,7 +464,7 @@ namespace PhysX
             var positionBefore = position;
             if (!IsFinite(positionBefore))
             {
-                Debug.LogWarning($"[BoxCharacterController] Controller '{name}' has non-finite position {positionBefore}; skipping Move.", this);
+                Debug.LogWarning($"PhsyX: [BoxCharacterController] Controller '{name}' has non-finite position {positionBefore}; skipping Move.", this);
                 return default;
             }
             var filterData = PxFilterData_new_2((uint)_cachedCollisionMask, (uint)GetInstanceID(), 0, 0);
@@ -479,15 +500,15 @@ namespace PhysX
             }
             if (_controller != null)
             {
-                PhysicsManager.instance.UnregisterCharacterController(this);
+                PhysicsManager.instance?.UnregisterCharacterController(this);
                 var controllerActor = actor;
                 if (controllerActor != null)
                 {
-                    PhysicsManager.instance.RemoveCollider((PxActor*)controllerActor);
+                    PhysicsManager.instance?.RemoveCollider((PxActor*)controllerActor);
                 }
                 if (_shape != null)
                 {
-                    PhysicsManager.instance.UnregisterShape(_shape);
+                    PhysicsManager.instance?.UnregisterShape(_shape);
                     _shape = null;
                 }
                 PxController_release_mut(_controller);
@@ -557,6 +578,10 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CctQueryPreFilterDelegate))]
         private static PxQueryHitType CctQueryPreFilter(PxRigidActor* rigidActor, PxFilterData* filterData, PxShape* shape, uint hitFlags, void* userData)
         {
+            if (PhysicsManager.instance == null)
+            {
+                return PxQueryHitType.None;
+            }
             var collisionMask = (uint)userData;
             var shapeFilterData = PxShape_getQueryFilterData(shape);
             if ((shapeFilterData.word0 & collisionMask) == 0)
@@ -575,6 +600,10 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(CctControllerFilterDelegate))]
         private static bool CctControllerFilter(PxController* controllerA, PxController* controllerB, void* userData)
         {
+            if (PhysicsManager.instance == null)
+            {
+                return true;
+            }
             var actorA = (PxRigidActor*)PxController_getActor(controllerA);
             var flagsA = PxActor_getActorFlags((PxActor*)actorA);
             if ((flagsA & PxActorFlags.DisableSimulation) != 0)
@@ -618,6 +647,10 @@ namespace PhysX
         [MonoPInvokeCallback(typeof(OnShapeHitDelegate))]
         private static void OnShapeHit(PxControllerShapeHit* hit)
         {
+            if (PhysicsManager.instance == null)
+            {
+                return;
+            }
             var hitActor = hit->actor;
             if (hitActor == null)
             {

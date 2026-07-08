@@ -45,6 +45,10 @@ namespace PhysX
                 throw new Exception("Could not generate PhysX box mesh geometry");
             }
             CreateShape((PxGeometry*)&geometry);
+            if (shape == null)
+            {
+                return;
+            }
             PxShape_setFlags_mut(shape, flags);
             AttachShape(shape);
         }

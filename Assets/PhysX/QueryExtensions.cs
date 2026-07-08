@@ -7,7 +7,7 @@ namespace PhysX
 {
     public static class QueryExtensions
     {
-        public static Vector2 GetUV(this SweepHit sweepHit, int channel)
+        public static Vector3 GetUV(this SweepHit sweepHit, int channel)
         {
             unsafe
             {
@@ -28,7 +28,7 @@ namespace PhysX
             }
         }
 
-        public static Vector2 GetUV(this RaycastHit raycastHit, int channel)
+        public static Vector3 GetUV(this RaycastHit raycastHit, int channel)
         {
             unsafe
             {
@@ -56,9 +56,9 @@ namespace PhysX
             out Vector3 pos0,
             out Vector3 pos1,
             out Vector3 pos2,
-            out Vector2 uv0,
-            out Vector2 uv1,
-            out Vector2 uv2)
+            out Vector3 uv0,
+            out Vector3 uv1,
+            out Vector3 uv2)
         {
             pos0 = default;
             pos1 = default;
@@ -96,9 +96,9 @@ namespace PhysX
                 pos1 = ReadVector3(mesh, meshData, VertexAttribute.Position, vertIndex1);
                 pos2 = ReadVector3(mesh, meshData, VertexAttribute.Position, vertIndex2);
 
-                uv0 = ReadVector2(mesh, meshData, vertexAttribute, vertIndex0);
-                uv1 = ReadVector2(mesh, meshData, vertexAttribute, vertIndex1);
-                uv2 = ReadVector2(mesh, meshData, vertexAttribute, vertIndex2);
+                uv0 = ReadVector3(mesh, meshData, vertexAttribute, vertIndex0);
+                uv1 = ReadVector3(mesh, meshData, vertexAttribute, vertIndex1);
+                uv2 = ReadVector3(mesh, meshData, vertexAttribute, vertIndex2);
                 return true;
             }
             finally

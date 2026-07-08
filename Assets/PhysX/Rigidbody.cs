@@ -23,6 +23,25 @@ namespace PhysX
         private bool _isReleased;
         private bool _isPhysicsStatic;
 
+        public PxRigidDynamicLockFlags contraints { 
+            get
+            {
+                if (rigidDynamic == null)
+                {
+                    return default;
+                }
+                return PxRigidDynamic_getRigidDynamicLockFlags(rigidDynamic);
+            }
+            set
+            {
+                if (rigidDynamic == null)
+                {
+                    return;
+                }
+                PxRigidDynamic_setRigidDynamicLockFlags_mut(rigidDynamic, value);
+            }
+        }
+
         public float sleepThreshold
         {
             get => rigidDynamic == null ? 0f : PxRigidDynamic_getSleepThreshold(rigidDynamic);
@@ -246,6 +265,34 @@ namespace PhysX
             }
         }
 
+        public Vector3 angularVelocity
+        {
+            get => hasDynamicActor ? (Vector3)PxRigidDynamic_getAngularVelocity(rigidDynamic) : default;
+            set
+            {
+                if (!hasDynamicActor)
+                {
+                    return;
+                }
+                var v = (PxVec3)value;
+                PxRigidDynamic_setAngularVelocity_mut(rigidDynamic, &v, false);
+            }
+        }
+
+        public bool isSleeping => hasDynamicActor && PxRigidDynamic_isSleeping(rigidDynamic);
+
+        public void Sleep()
+        {
+            if (!hasDynamicActor || isKinematic)
+            {
+                return;
+            }
+            var zero = (PxVec3)Vector3.zero;
+            PxRigidDynamic_setLinearVelocity_mut(rigidDynamic, &zero, false);
+            PxRigidDynamic_setAngularVelocity_mut(rigidDynamic, &zero, false);
+            PxRigidDynamic_putToSleep_mut(rigidDynamic);
+        }
+
         private IntPtr _physicsNamePtr;
 
         public string physicsName
@@ -336,7 +383,7 @@ namespace PhysX
             }
             if (actor != null)
             {
-                PhysicsManager.instance.RemoveCollider((PxActor*)actor);
+                PhysicsManager.instance?.RemoveCollider((PxActor*)actor);
                 PxRigidActor_release_mut(actor);
             }
             rigidDynamic = null;
@@ -350,18 +397,28 @@ namespace PhysX
 
         private void OnEnable()
         {
-            if (actor != null)
-            {
-                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, false);
-            }
+            SetDisableSimulation(false);
         }
 
         private void OnDisable()
         {
-            if (actor != null)
+            SetDisableSimulation(true);
+        }
+
+        private void SetDisableSimulation(bool disable)
+        {
+            if (PhysicsManager.instance == null || actor == null)
             {
-                PxActor_setActorFlag_mut((PxActor*)actor, PxActorFlag.DisableSimulation, true);
+                return;
             }
+            var capturedActor = (IntPtr)(PxActor*)actor;
+            var pm = PhysicsManager.instance;
+            if (pm != null && pm.inSimulation)
+            {
+                pm.RunDeferred(() => PxActor_setActorFlag_mut((PxActor*)capturedActor, PxActorFlag.DisableSimulation, disable));
+                return;
+            }
+            PxActor_setActorFlag_mut((PxActor*)capturedActor, PxActorFlag.DisableSimulation, disable);
         }
 
         private void OnDestroy()
@@ -375,7 +432,7 @@ namespace PhysX
 
         private void FixedUpdate()
         {
-            if (rigidDynamic == null)
+            if (PhysicsManager.instance == null || rigidDynamic == null)
             {
                 return;
             }
@@ -410,6 +467,18 @@ namespace PhysX
                 return;
             }
             _isReleased = true;
+
+            var pm = PhysicsManager.instance;
+            if (pm != null && pm.inSimulation)
+            {
+                pm.RunDeferred(ReleaseNative);
+                return;
+            }
+            ReleaseNative();
+        }
+
+        private void ReleaseNative()
+        {
             for (var i = _colliders.Count - 1; i >= 0; i--)
             {
                 var collider = _colliders[i];
@@ -423,7 +492,10 @@ namespace PhysX
             _colliders.Clear();
             if (actor != null)
             {
-                PhysicsManager.instance.RemoveCollider((PxActor*)actor);
+                if (PhysicsManager.instance != null)
+                {
+                    PhysicsManager.instance.RemoveCollider((PxActor*)actor);
+                }
                 PxRigidActor_release_mut(actor);
             }
             rigidDynamic = null;
@@ -435,24 +507,10 @@ namespace PhysX
             }
         }
 
-        public void AddForce(Vector3 force, ForceMode mode = ForceMode.Force)
+        public void AddForce(Vector3 force, PxForceMode mode = PxForceMode.Force)
         {
             var pxForce = (PxVec3)force;
-            switch (mode)
-            {
-                case ForceMode.Force:
-                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Force, true);
-                    break;
-                case ForceMode.Acceleration:
-                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Acceleration, true);
-                    break;
-                case ForceMode.Impulse:
-                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.Impulse, true);
-                    break;
-                case ForceMode.VelocityChange:
-                    PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, PxForceMode.VelocityChange, true);
-                    break;
-            }
+            PxRigidBody_addForce_mut((PxRigidBody*)rigidDynamic, &pxForce, mode, true);
         }
     }
 }

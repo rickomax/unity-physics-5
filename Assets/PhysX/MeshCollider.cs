@@ -77,7 +77,7 @@ namespace PhysX
             }
             if (!_sharedMesh.isReadable)
             {
-                Debug.LogWarning($"MeshCollider on '{name}': mesh is not readable.");
+                Debug.LogWarning($"PhysX: MeshCollider on '{name}': mesh is not readable.");
                 return;
             }
             var scale = GetPhysicsScale();
@@ -85,21 +85,21 @@ namespace PhysX
             {
                 if (!isPhysicsStatic && !isKinematic)
                 {
-                    Debug.LogWarning("Triangular concave meshes can't be assigned to dynamic rigidbodies.");
+                    Debug.LogWarning("PhysX: Triangular concave meshes can't be assigned to dynamic rigidbodies.");
                     return;
                 }
                 PhysicsManager.instance.BakeMesh(_sharedMesh, convex: false);
                 triangleMesh = PhysicsManager.instance.GetTriangleMesh(_sharedMesh);
                 if (triangleMesh == null)
                 {
-                    Debug.LogError("Could not retrieve baked PhysX triangle mesh.");
+                    Debug.LogError("PhysX: Could not retrieve baked triangle mesh.");
                     return;
                 }
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxTriangleMeshGeometry_new(triangleMesh, &meshScale, 0);
                 if (!PxTriangleMeshGeometry_isValid(&geometry))
                 {
-                    Debug.LogError("Could not generate PhysX triangle mesh geometry.");
+                    Debug.LogError("PhysX: Could not generate triangle mesh geometry.");
                     return;
                 }
                 CreateShape((PxGeometry*)&geometry);
@@ -110,23 +110,24 @@ namespace PhysX
                 convexMesh = PhysicsManager.instance.GetConvexMesh(_sharedMesh);
                 if (convexMesh == null)
                 {
-                    Debug.LogError("Could not retrieve baked PhysX convex mesh.");
+                    Debug.LogError("PhysX: Could not retrieve baked convex mesh.");
                     return;
                 }
                 var meshScale = new PxMeshScale { rotation = Quaternion.identity, scale = scale };
                 var geometry = PxConvexMeshGeometry_new(convexMesh, &meshScale, 0);
                 if (!PxConvexMeshGeometry_isValid(&geometry))
                 {
-                    Debug.LogError("Could not generate PhysX convex mesh geometry.");
+                    Debug.LogError("PhysX: Could not generate convex mesh geometry.");
                     return;
                 }
                 CreateShape((PxGeometry*)&geometry);
             }
-            if (shape != null)
+            if (shape == null)
             {
-                PxShape_setFlags_mut(shape, flags);
-                AttachShape(shape);
+                return;
             }
+            PxShape_setFlags_mut(shape, flags);
+            AttachShape(shape);
         }
     }
 }

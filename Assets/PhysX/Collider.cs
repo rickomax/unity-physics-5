@@ -93,6 +93,46 @@ namespace PhysX
             }
         }
 
+        public PxCombineMode restitutionCombineMode
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getRestitutionCombineMode(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setRestitutionCombineMode_mut(_material, value);
+            }
+        }
+
+        public PxCombineMode frictionCombineMode
+        {
+            get
+            {
+                if (_material == null)
+                {
+                    return default;
+                }
+                return PxMaterial_getFrictionCombineMode(_material);
+            }
+            set
+            {
+                if (_material == null)
+                {
+                    return;
+                }
+                PxMaterial_setFrictionCombineMode_mut(_material, value);
+            }
+        }
+
         public Vector3 center
         {
             get => _center;
@@ -305,25 +345,41 @@ namespace PhysX
 
         protected virtual void OnEnable()
         {
-            if (shape != null)
-            {
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, !isTrigger);
-                PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, true);
-            }
+            ApplyShapeEnabledFlags(true);
         }
 
         protected virtual void OnDisable()
         {
-            if (shape != null)
+            ApplyShapeEnabledFlags(false);
+        }
+
+        private void ApplyShapeEnabledFlags(bool enabled)
+        {
+            if (shape == null || PhysicsManager.instance == null)
             {
-                PxShape_setFlag_mut(shape, PxShapeFlag.SimulationShape, false);
-                PxShape_setFlag_mut(shape, PxShapeFlag.SceneQueryShape, false);
+                return;
             }
+            var capturedShape = (IntPtr)shape;
+            var simulationShape = enabled && !isTrigger;
+            var sceneQueryShape = enabled;
+            var pm = PhysicsManager.instance;
+            if (pm != null && pm.inSimulation)
+            {
+                pm.RunDeferred(() =>
+                {
+                    var s = (PxShape*)capturedShape;
+                    PxShape_setFlag_mut(s, PxShapeFlag.SimulationShape, simulationShape);
+                    PxShape_setFlag_mut(s, PxShapeFlag.SceneQueryShape, sceneQueryShape);
+                });
+                return;
+            }
+            PxShape_setFlag_mut((PxShape*)capturedShape, PxShapeFlag.SimulationShape, simulationShape);
+            PxShape_setFlag_mut((PxShape*)capturedShape, PxShapeFlag.SceneQueryShape, sceneQueryShape);
         }
 
         protected virtual void Update()
         {
-            if (shape != null && gameObject.layer != _lastLayer)
+            if (PhysicsManager.instance != null && shape != null && gameObject.layer != _lastLayer)
             {
                 SetupFilterData(shape);
                 _lastLayer = gameObject.layer;
@@ -339,6 +395,17 @@ namespace PhysX
 
             _released = true;
 
+            var pm = PhysicsManager.instance;
+            if (pm != null && pm.inSimulation)
+            {
+                pm.RunDeferred(ReleaseNative);
+                return;
+            }
+            ReleaseNative();
+        }
+
+        private void ReleaseNative()
+        {
             DestroyShape();
 
             if (_attachedRigidbody != null)
@@ -347,7 +414,11 @@ namespace PhysX
                 _attachedRigidbody = null;
             }
 
-            _material = null;
+            if (_material != null)
+            {
+                PxBase_release_mut((PxBase*)_material);
+                _material = null;
+            }
 
             if (_physicsNamePtr != IntPtr.Zero)
             {
@@ -414,7 +485,7 @@ namespace PhysX
             {
                 PxRigidActor_detachShape_mut(actor, shapeToDetach, true);
             }
-            PhysicsManager.instance.UnregisterShape(shapeToDetach);
+            PhysicsManager.instance?.UnregisterShape(shapeToDetach);
             _attachedRigidbody?.RecomputeMassAndInertia();
         }
 
@@ -428,7 +499,7 @@ namespace PhysX
             }
             else
             {
-                Debug.LogError("Could not create PhysX shape");
+                Debug.LogError("PhsyX: Could not create shape");
             }
         }
 
